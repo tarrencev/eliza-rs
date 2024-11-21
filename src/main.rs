@@ -1,6 +1,6 @@
 use discord::Discord;
 use git2::Repository;
-use rig::providers;
+use rig::{agent::AgentBuilder, providers};
 use serenity::prelude::*;
 use std::{env, path::Path};
 
@@ -9,6 +9,7 @@ mod discord;
 
 const GITHUB_PATH: &str = ".repo";
 const GITHUB_REPO: &str = "https://github.com/cartridge-gg/docs";
+const CHARACTER: &str = "../characters/shinobi.toml";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -29,9 +30,20 @@ async fn main() -> anyhow::Result<()> {
     println!("Cloning repository to {:?}", clone_path);
     Repository::clone(GITHUB_REPO, &clone_path)?;
 
+    let character_content =
+        std::fs::read_to_string(CHARACTER).expect("Failed to read character file");
+    let character: character::Character =
+        toml::from_str(&character_content).expect("Failed to parse character TOML");
+
     // Initialize LanceDB
     let db = lancedb::connect("data/lancedb-store").execute().await?;
     let model = client().completion_model(providers::xai::GROK_BETA);
+
+    let agent = AgentBuilder::new(model)
+        .context("Definition of a *flurbo*: A flurbo is a green alien that lives on cold planets")
+        .context("Definition of a *glarb-glarb*: A glarb-glarb is a ancient tool used by the ancestors of the inhabitants of planet Jiro to farm the land.")
+        .context("Definition of a *linglingdong*: A term used by inhabitants of the far side of the moon to describe humans.")
+        .build();
 
     let intents = GatewayIntents::GUILD_MESSAGES
         | GatewayIntents::DIRECT_MESSAGES

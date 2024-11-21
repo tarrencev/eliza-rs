@@ -22,4 +22,5 @@ serenity = { version = "0.12", features = [
     "cache",
 ] }
 tokio = { version = "1.36", features = ["full"] }
+toml = "0.8.19"
 walkdir = "2.4"
