@@ -4,13 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-arrow-array = "52.2.0"
+arrow-array = "53.3.0"
 async-trait = "0.1"
 anyhow = "1.0"
+clap = { version = "4.5.21", features = ["derive", "env"] }
+chrono = "0.4.20-rc.1"
 dotenv = "0.15.0"
-git2 = "0.18"
-lancedb = "0.10.0"
-octocrab = "0.32"
+git2 = "0.18.0"
+lancedb = "0.13.0"
+octocrab = "0.42.0"
 rig-core = { git = "https://github.com/0xPlaygrounds/rig" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

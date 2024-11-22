@@ -14,5 +14,4 @@
 **/*.pdb
 
 .env
-
-/repos/
+.repo

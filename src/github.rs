@@ -1,52 +1,63 @@
-use crate::embeddings::{EmbeddingClient, VectorStore};
 use anyhow::Result;
-use git2::Repository;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use walkdir::WalkDir;
+use git2::{FetchOptions, RemoteCallbacks, Repository};
+use std::path::PathBuf;
 
-pub struct GitHubManager<E, V>
-where
-    E: EmbeddingClient + Send + Sync,
-    V: VectorStore + Send + Sync,
-{
-    embedding_client: Arc<E>,
-    vector_store: Arc<V>,
-    repo_path: PathBuf,
+pub struct GitRepo {
+    url: String,
+    path: PathBuf,
 }
 
-impl<E, V> GitHubManager<E, V>
-where
-    E: EmbeddingClient + Send + Sync,
-    V: VectorStore + Send + Sync,
-{
-    pub fn new(embedding_client: Arc<E>, vector_store: Arc<V>) -> Self {
-        Self {
-            embedding_client,
-            vector_store,
-            repo_path: PathBuf::from("repos"),
+impl GitRepo {
+    pub fn new(url: String, path: PathBuf) -> Self {
+        Self { url, path }
+    }
+
+    pub fn sync(&self) -> Result<Repository> {
+        if self.path.exists() {
+            self.reset()
+        } else {
+            self.clone()
         }
     }
 
-    pub fn clone_repository(&self, repo_url: &str) -> Result<PathBuf> {
-        std::fs::create_dir_all(&self.repo_path)?;
+    fn clone(&self) -> Result<Repository> {
+        std::fs::create_dir_all(&self.path)?;
+        Ok(Repository::clone(
+            &self.url,
+            &self.path.join(self.repo_name()),
+        )?)
+    }
 
-        let repo_name = repo_url
+    fn reset(&self) -> Result<Repository> {
+        let repo = Repository::open(&self.path)?;
+
+        {
+            let mut remote = repo.find_remote("origin")?;
+            let callbacks = RemoteCallbacks::new();
+            let mut fetch_options = FetchOptions::new();
+            fetch_options.remote_callbacks(callbacks);
+            remote.fetch(&["main"], Some(&mut fetch_options), None)?;
+
+            let main_ref = repo.find_reference("refs/remotes/origin/main")?;
+            let main_commit = main_ref.peel_to_commit()?;
+
+            let mut checkout_builder = git2::build::CheckoutBuilder::new();
+            repo.reset(
+                &main_commit.as_object(),
+                git2::ResetType::Hard,
+                Some(&mut checkout_builder),
+            )?;
+        }
+
+        Ok(repo)
+    }
+
+    pub fn repo_name(&self) -> String {
+        self.url
             .split('/')
             .last()
             .unwrap_or("repo")
-            .replace(".git", "");
-
-        let clone_path = self.repo_path.join(&repo_name);
-        println!("Cloning repository to {:?}", clone_path);
-        Repository::clone(repo_url, &clone_path)?;
-
-        Ok(clone_path)
-    }
-
-    fn is_ignored(path: &Path) -> bool {
-        let ignored = [".git", "target", "node_modules", ".env", ".idea", ".vscode"];
-        path.iter()
-            .any(|part| ignored.contains(&part.to_string_lossy().as_ref()))
+            .replace(".git", "")
+            .to_string()
     }
 }

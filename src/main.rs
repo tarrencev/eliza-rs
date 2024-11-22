@@ -1,69 +1,72 @@
-use discord::Discord;
-use git2::Repository;
-use rig::{agent::AgentBuilder, providers};
-use serenity::prelude::*;
-use std::{env, path::Path};
+use agent::Agent;
+use clap::{command, Parser};
+use rig::{agent::AgentBuilder, completion::Prompt, providers};
+use std::path::PathBuf;
 
+use github::GitRepo;
+
+mod agent;
 mod character;
 mod discord;
+mod github;
 
-const GITHUB_PATH: &str = ".repo";
-const GITHUB_REPO: &str = "https://github.com/cartridge-gg/docs";
-const CHARACTER: &str = "../characters/shinobi.toml";
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Path to character profile TOML file
+    #[arg(long, default_value = "src/characters/shinobi.toml")]
+    character: String,
+
+    /// Path to LanceDB database
+    #[arg(long, default_value = "data/lancedb-store")]
+    db_path: String,
+
+    /// Discord API token (can also be set via DISCORD_API_TOKEN env var)
+    #[arg(long, env)]
+    discord_api_token: String,
+
+    /// XAI API token (can also be set via XAI_API_KEY env var)
+    #[arg(long, env = "XAI_API_KEY")]
+    xai_api_key: String,
+
+    /// GitHub repository URL
+    #[arg(long, default_value = "https://github.com/cartridge-gg/docs")]
+    github_repo: String,
+
+    /// Local path to clone GitHub repository
+    #[arg(long, default_value = ".repo")]
+    github_path: PathBuf,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
 
-    let token =
-        env::var("DISCORD_TOKEN").expect("Please set the DISCORD_TOKEN environment variable");
+    let args = Args::parse();
 
-    std::fs::create_dir_all(GITHUB_PATH)?;
-
-    let repo_name = GITHUB_REPO
-        .split('/')
-        .last()
-        .unwrap_or("repo")
-        .replace(".git", "");
-
-    let clone_path = Path::new(GITHUB_PATH).join(&repo_name);
-    println!("Cloning repository to {:?}", clone_path);
-    Repository::clone(GITHUB_REPO, &clone_path)?;
+    let repo = GitRepo::new(args.github_repo, args.github_path);
+    repo.sync()?;
 
     let character_content =
-        std::fs::read_to_string(CHARACTER).expect("Failed to read character file");
+        std::fs::read_to_string(&args.character).expect("Failed to read character file");
     let character: character::Character =
         toml::from_str(&character_content).expect("Failed to parse character TOML");
 
-    // Initialize LanceDB
-    let db = lancedb::connect("data/lancedb-store").execute().await?;
-    let model = client().completion_model(providers::xai::GROK_BETA);
+    let db = lancedb::connect(&args.db_path).execute().await?;
 
-    let agent = AgentBuilder::new(model)
-        .context("Definition of a *flurbo*: A flurbo is a green alien that lives on cold planets")
-        .context("Definition of a *glarb-glarb*: A glarb-glarb is a ancient tool used by the ancestors of the inhabitants of planet Jiro to farm the land.")
-        .context("Definition of a *linglingdong*: A term used by inhabitants of the far side of the moon to describe humans.")
+    let agent = Agent::new(character, &args.xai_api_key)
+        .builder()
+        .context(&format!(
+            "Current time: {}",
+            chrono::Local::now().format("%I:%M:%S %p, %Y-%m-%d")
+        ))
         .build();
 
-    let intents = GatewayIntents::GUILD_MESSAGES
-        | GatewayIntents::DIRECT_MESSAGES
-        | GatewayIntents::MESSAGE_CONTENT;
+    let response = agent
+        .prompt("Which rust example is best suited for the operation 1 + 2")
+        .await?;
 
-    let bot = Discord::new("Shinobi".to_string());
-
-    let mut client = Client::builder(&token, intents)
-        .event_handler(bot)
-        .await
-        .expect("Failed to create client");
-
-    println!("Starting bot...");
-    if let Err(why) = client.start().await {
-        println!("Client error: {:?}", why);
-    }
+    println!("{}", response);
 
     Ok(())
-}
-
-fn client() -> providers::xai::Client {
-    providers::xai::Client::new(&env::var("XAI_API_KEY").expect("XAI_API_KEY not set"))
 }

@@ -7,6 +7,31 @@ pub struct Discord {
     pub name: String,
 }
 
+use serenity::model::gateway::GatewayIntents;
+
+impl Discord {
+    pub async fn start(&self, token: &str) -> Result<(), serenity::Error> {
+        let intents = GatewayIntents::GUILD_MESSAGES
+            | GatewayIntents::DIRECT_MESSAGES
+            | GatewayIntents::MESSAGE_CONTENT;
+
+        let mut client = Client::builder(token, intents)
+            .event_handler(self.clone())
+            .await?;
+
+        println!("Starting bot...");
+        client.start().await
+    }
+}
+
+impl Clone for Discord {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+        }
+    }
+}
+
 #[async_trait]
 impl EventHandler for Discord {
     async fn message(&self, ctx: Context, msg: Message) {

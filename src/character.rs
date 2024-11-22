@@ -3,13 +3,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Character {
     pub name: String,
-    pub bio: Vec<String>,
-    pub lore: Vec<String>,
-    pub message_examples: Vec<Vec<Message>>,
-    pub post_examples: Vec<String>,
-    pub topics: Vec<String>,
-    pub style: Style,
-    pub adjectives: Vec<String>,
+    pub preamble: String,
+    // pub lore: Vec<String>,
+    // pub message_examples: Vec<Vec<Message>>,
+    // pub post_examples: Vec<String>,
+    // pub topics: Vec<String>,
+    // pub style: Style,
+    // pub adjectives: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
