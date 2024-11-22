@@ -1,14 +1,14 @@
-use agent::Agent;
 use clap::{command, Parser};
-use rig::{agent::AgentBuilder, completion::Prompt, providers};
-use std::path::PathBuf;
+use rig::{
+    completion::Prompt,
+    providers::{self, openai},
+    vector_store::in_memory_store::InMemoryVectorStore,
+};
 
-use github::GitRepo;
-
-mod agent;
-mod character;
-mod discord;
-mod github;
+use asuka::agent::Agent;
+use asuka::character;
+use asuka::knowledge::KnowledgeBase;
+use asuka::loaders::github::GitLoader;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -29,13 +29,17 @@ struct Args {
     #[arg(long, env = "XAI_API_KEY")]
     xai_api_key: String,
 
+    /// OpenAI API token (can also be set via OPENAI_API_KEY env var)
+    #[arg(long, env = "OPENAI_API_KEY")]
+    openai_api_key: String,
+
     /// GitHub repository URL
     #[arg(long, default_value = "https://github.com/cartridge-gg/docs")]
     github_repo: String,
 
     /// Local path to clone GitHub repository
     #[arg(long, default_value = ".repo")]
-    github_path: PathBuf,
+    github_path: String,
 }
 
 #[tokio::main]
@@ -44,17 +48,30 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
-    let repo = GitRepo::new(args.github_repo, args.github_path);
-    repo.sync()?;
+    let repo = GitLoader::new(args.github_repo, &args.github_path)?;
 
     let character_content =
         std::fs::read_to_string(&args.character).expect("Failed to read character file");
     let character: character::Character =
         toml::from_str(&character_content).expect("Failed to parse character TOML");
 
-    let db = lancedb::connect(&args.db_path).execute().await?;
+    let client = providers::openai::Client::new(&args.openai_api_key);
+    let embedding_model = client.embedding_model(openai::TEXT_EMBEDDING_3_SMALL);
+
+    let store = InMemoryVectorStore::default();
+    let mut knowledge = KnowledgeBase::new(store, embedding_model);
+
+    // Add some example documents
+    knowledge
+        .add_documents(
+            repo.with_dir("src/pages/vrf")?
+                .read_with_path()
+                .ignore_errors(),
+        )
+        .await?;
 
     let agent = Agent::new(character, &args.xai_api_key)
+        .with_knowledge(&knowledge)
         .builder()
         .context(&format!(
             "Current time: {}",
