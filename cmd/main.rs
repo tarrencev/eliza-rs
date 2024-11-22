@@ -1,15 +1,11 @@
 use clap::{command, Parser};
-use rig::{
-    completion::Prompt,
-    providers::{self, openai},
-    vector_store::in_memory_store::InMemoryVectorStore,
-};
+use rig::providers::{self, openai};
 
-use asuka::character;
 use asuka::init_logging;
 use asuka::knowledge::KnowledgeBase;
 use asuka::loaders::github::GitLoader;
 use asuka::{agent::Agent, clients::discord::DiscordClient};
+use asuka::{character, stores::sqlite::SqliteStore};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -18,8 +14,8 @@ struct Args {
     #[arg(long, default_value = "src/characters/shinobi.toml")]
     character: String,
 
-    /// Path to LanceDB database
-    #[arg(long, default_value = "data/lancedb-store")]
+    /// Path to database
+    #[arg(long, default_value = "db.sqlite")]
     db_path: String,
 
     /// Discord API token (can also be set via DISCORD_API_TOKEN env var)
@@ -63,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let xai = providers::xai::Client::new(&args.xai_api_key);
     let completion_model = xai.completion_model(providers::xai::GROK_BETA);
 
-    let store = InMemoryVectorStore::default();
+    let store = SqliteStore::new(args.db_path).await?;
     let mut knowledge = KnowledgeBase::new(store, embedding_model);
 
     knowledge

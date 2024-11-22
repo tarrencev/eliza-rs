@@ -15,3 +15,5 @@
 
 .env
 .repo
+
+*.sqlite

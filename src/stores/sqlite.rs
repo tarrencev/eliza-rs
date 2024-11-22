@@ -1,86 +1,106 @@
 use rig::embeddings::{DocumentEmbeddings, Embedding, EmbeddingModel};
 use rig::vector_store::{VectorStore, VectorStoreError, VectorStoreIndex};
+use rusqlite::ffi::sqlite3_auto_extension;
+use rusqlite::OptionalExtension;
 use serde::Deserialize;
-use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::{Row, SqlitePool};
+use sqlite_vec::sqlite3_vec_init;
 use std::path::Path;
+use tokio_rusqlite::Connection;
+use tracing::{debug, info};
+use zerocopy::IntoBytes;
 
-pub struct SQLiteVectorStore {
-    pool: SqlitePool,
+#[derive(Clone)]
+pub struct SqliteStore {
+    conn: Connection,
 }
 
-impl SQLiteVectorStore {
+impl SqliteStore {
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, VectorStoreError> {
-        let pool = SqlitePoolOptions::new()
-            .connect(&format!("sqlite://{}", path.as_ref().display()))
+        info!("Initializing SQLite store at {:?}", path.as_ref());
+        unsafe {
+            sqlite3_auto_extension(Some(std::mem::transmute(sqlite3_vec_init as *const ())));
+        }
+
+        let conn = Connection::open(path)
             .await
             .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
 
+        debug!("Running initial migrations");
         // Run migrations or create tables if they don't exist
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS documents (
-                id TEXT PRIMARY KEY,
-                document TEXT NOT NULL
-            )",
-        )
-        .execute(&pool)
+        conn.call(|conn| {
+            conn.execute_batch(
+                "BEGIN;
+                CREATE TABLE IF NOT EXISTS documents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    doc_id TEXT UNIQUE NOT NULL,
+                    document TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_doc_id ON documents(doc_id);
+                CREATE VIRTUAL TABLE IF NOT EXISTS embeddings USING vec0(embedding float[1536]);
+                COMMIT;",
+            )
+            .map_err(|e| tokio_rusqlite::Error::from(e))
+        })
         .await
         .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
 
-        // ... Similarly for other tables ...
-
-        Ok(Self { pool })
+        Ok(Self { conn })
     }
 
-    fn serialize_embedding(embedding: &Embedding) -> String {
-        format!(
-            "[{}]",
-            embedding
-                .vec
-                .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
+    fn serialize_embedding(embedding: &Embedding) -> Vec<f32> {
+        embedding.vec.iter().map(|x| *x as f32).collect()
     }
 }
 
-impl VectorStore for SQLiteVectorStore {
+impl VectorStore for SqliteStore {
     type Q = String;
 
     async fn add_documents(
         &mut self,
         documents: Vec<DocumentEmbeddings>,
     ) -> Result<(), VectorStoreError> {
-        let mut tx = self
-            .pool
-            .begin()
+        info!("Adding {} documents to store", documents.len());
+        self.conn
+            .call(|conn| {
+                let tx = conn
+                    .transaction()
+                    .map_err(|e| tokio_rusqlite::Error::from(e))?;
+
+                for doc in documents {
+                    debug!("Storing document with id {}", doc.id);
+                    // Store document and get auto-incremented ID
+                    tx.execute(
+                        "INSERT OR REPLACE INTO documents (doc_id, document) VALUES (?1, ?2)",
+                        &[&doc.id, &doc.document.to_string()],
+                    )
+                    .map_err(|e| tokio_rusqlite::Error::from(e))?;
+
+                    let doc_id = tx.last_insert_rowid();
+
+                    // Store embeddings
+                    let mut stmt = tx
+                        .prepare("INSERT INTO embeddings (rowid, embedding) VALUES (?1, ?2)")
+                        .map_err(|e| tokio_rusqlite::Error::from(e))?;
+
+                    debug!(
+                        "Storing {} embeddings for document {}",
+                        doc.embeddings.len(),
+                        doc.id
+                    );
+                    for embedding in doc.embeddings {
+                        let vec = Self::serialize_embedding(&embedding);
+                        let blob = rusqlite::types::Value::Blob(vec.as_slice().as_bytes().to_vec());
+                        stmt.execute(rusqlite::params![doc_id, blob])
+                            .map_err(|e| tokio_rusqlite::Error::from(e))?;
+                    }
+                }
+
+                tx.commit().map_err(|e| tokio_rusqlite::Error::from(e))?;
+                Ok(())
+            })
             .await
             .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
 
-        for doc in documents {
-            // Store document
-            sqlx::query("INSERT OR REPLACE INTO documents (id, document) VALUES (?1, ?2)")
-                .bind(&doc.id)
-                .bind(&doc.document.to_string())
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
-
-            // Store embeddings
-            for embedding in doc.embeddings {
-                sqlx::query("INSERT INTO embeddings (rowid, embedding) VALUES (?1, ?2)")
-                    .bind(&doc.id)
-                    .bind(&Self::serialize_embedding(&embedding))
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
-            }
-        }
-
-        tx.commit()
-            .await
-            .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
         Ok(())
     }
 
@@ -88,19 +108,32 @@ impl VectorStore for SQLiteVectorStore {
         &self,
         id: &str,
     ) -> Result<Option<T>, VectorStoreError> {
-        let result = sqlx::query("SELECT document FROM documents WHERE id = ?1")
-            .bind(id)
-            .fetch_optional(&self.pool)
+        debug!("Fetching document with id {}", id);
+        let id_clone = id.to_string();
+        let doc_str = self
+            .conn
+            .call(move |conn| {
+                conn.query_row(
+                    "SELECT document FROM documents WHERE doc_id = ?1",
+                    rusqlite::params![id_clone],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|e| tokio_rusqlite::Error::from(e))
+            })
             .await
             .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
 
-        match result {
-            Some(row) => {
-                let doc_str: String = row.get("document");
-                let doc = serde_json::from_str(&doc_str)?;
+        match doc_str {
+            Some(doc_str) => {
+                let doc: T = serde_json::from_str(&doc_str)
+                    .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
                 Ok(Some(doc))
             }
-            None => Ok(None),
+            None => {
+                debug!("No document found with id {}", id);
+                Ok(None)
+            }
         }
     }
 
@@ -108,39 +141,48 @@ impl VectorStore for SQLiteVectorStore {
         &self,
         id: &str,
     ) -> Result<Option<DocumentEmbeddings>, VectorStoreError> {
+        debug!("Fetching embeddings for document {}", id);
         // First get the document
-        let doc: Option<serde_json::Value> = self.get_document(id).await?;
+        let doc: Option<serde_json::Value> = self.get_document(&id).await?;
 
         if let Some(doc) = doc {
-            let embeddings = sqlx::query("SELECT embedding FROM embeddings WHERE rowid = ?1")
-                .bind(id)
-                .fetch_all(&self.pool)
+            let id_clone = id.to_string();
+            let embeddings = self
+                .conn
+                .call(move |conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT e.embedding 
+                         FROM embeddings e
+                         JOIN documents d ON e.rowid = d.id
+                         WHERE d.doc_id = ?1",
+                    )?;
+
+                    let embeddings = stmt
+                        .query_map(rusqlite::params![id_clone], |row| {
+                            let bytes: Vec<u8> = row.get(0)?;
+                            let vec = bytes
+                                .chunks(4)
+                                .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()) as f64)
+                                .collect();
+                            Ok(rig::embeddings::Embedding {
+                                vec,
+                                document: "".to_string(),
+                            })
+                        })?
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(embeddings)
+                })
                 .await
                 .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
 
-            // Parse embeddings
-            let embeddings = embeddings
-                .into_iter()
-                .map(|row| {
-                    let e: String = row.get("embedding");
-                    let e = e
-                        .trim_matches(|c| c == '[' || c == ']')
-                        .split(',')
-                        .map(|s| s.trim().parse::<f64>().unwrap())
-                        .collect::<Vec<_>>();
-                    rig::embeddings::Embedding {
-                        vec: e.into(),
-                        document: "".to_string(), // We don't store individual document chunks
-                    }
-                })
-                .collect();
-
+            debug!("Found {} embeddings for document {}", embeddings.len(), id);
             Ok(Some(DocumentEmbeddings {
                 id: id.to_string(),
                 document: doc,
                 embeddings,
             }))
         } else {
+            debug!("No embeddings found for document {}", id);
             Ok(None)
         }
     }
@@ -149,68 +191,96 @@ impl VectorStore for SQLiteVectorStore {
         &self,
         query: Self::Q,
     ) -> Result<Option<DocumentEmbeddings>, VectorStoreError> {
-        // This would require the query to be an embedding vector
-        let result = sqlx::query(
-            "SELECT rowid, distance FROM embeddings 
-             WHERE embedding MATCH ?1 
-             ORDER BY distance LIMIT 1",
-        )
-        .bind(&query)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
+        debug!("Searching for document matching query");
+        let result = self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT d.doc_id, e.distance 
+                     FROM embeddings e
+                     JOIN documents d ON e.rowid = d.id
+                     WHERE e.embedding MATCH ?1  AND k = ?2
+                     ORDER BY e.distance",
+                )?;
+
+                let result = stmt
+                    .query_row(&[query.as_bytes()], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+                    })
+                    .optional()?;
+                Ok(result)
+            })
+            .await
+            .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
 
         match result {
-            Some(row) => {
-                let id: String = row.get("rowid");
+            Some((id, distance)) => {
+                debug!("Found matching document {} with distance {}", id, distance);
                 self.get_document_embeddings(&id).await
             }
-            None => Ok(None),
+            None => {
+                debug!("No matching documents found");
+                Ok(None)
+            }
         }
     }
 }
 
-pub struct SQLiteVectorIndex<M: EmbeddingModel> {
-    store: SQLiteVectorStore,
-    model: M,
+pub struct SqliteVectorIndex<E: EmbeddingModel> {
+    store: SqliteStore,
+    embedding_model: E,
 }
 
-impl<M: EmbeddingModel> SQLiteVectorIndex<M> {
-    pub fn new(store: SQLiteVectorStore, model: M) -> Self {
-        Self { store, model }
+impl<E: EmbeddingModel> SqliteVectorIndex<E> {
+    pub fn new(embedding_model: E, store: SqliteStore) -> Self {
+        Self {
+            store,
+            embedding_model,
+        }
     }
 }
 
-impl<M: EmbeddingModel + std::marker::Sync> VectorStoreIndex for SQLiteVectorIndex<M> {
+impl<E: EmbeddingModel + std::marker::Sync> VectorStoreIndex for SqliteVectorIndex<E> {
     async fn top_n<T: for<'a> Deserialize<'a>>(
         &self,
         query: &str,
         n: usize,
     ) -> Result<Vec<(f64, String, T)>, VectorStoreError> {
-        let embedding = self.model.embed_document(query).await?;
-        let query_vec = SQLiteVectorStore::serialize_embedding(&embedding);
+        debug!("Finding top {} matches for query", n);
+        let embedding = self.embedding_model.embed_document(query).await?;
+        let query_vec = SqliteStore::serialize_embedding(&embedding);
 
-        let rows = sqlx::query(
-            "SELECT rowid, distance FROM embeddings 
-             WHERE embedding MATCH ?1 
-             ORDER BY distance 
-             LIMIT ?2",
-        )
-        .bind(&query_vec)
-        .bind(n as i64)
-        .fetch_all(&self.store.pool)
-        .await
-        .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
+        let rows = self
+            .store
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT d.doc_id, e.distance 
+                    FROM embeddings e
+                    JOIN documents d ON e.rowid = d.id
+                    WHERE e.embedding MATCH ?1 AND k = ?2
+                    ORDER BY e.distance",
+                )?;
 
+                let rows = stmt
+                    .query_map(rusqlite::params![query_vec.as_bytes(), n], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            })
+            .await
+            .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
+
+        debug!("Found {} potential matches", rows.len());
         let mut top_n = Vec::new();
-        for row in rows {
-            let id: String = row.get("rowid");
-            let distance: f64 = row.get("distance");
+        for (id, distance) in rows {
             if let Some(doc) = self.store.get_document(&id).await? {
                 top_n.push((distance, id, doc));
             }
         }
 
+        debug!("Returning {} matches", top_n.len());
         Ok(top_n)
     }
 
@@ -219,30 +289,33 @@ impl<M: EmbeddingModel + std::marker::Sync> VectorStoreIndex for SQLiteVectorInd
         query: &str,
         n: usize,
     ) -> Result<Vec<(f64, String)>, VectorStoreError> {
-        let embedding = self.model.embed_document(query).await?;
-        let query_vec = SQLiteVectorStore::serialize_embedding(&embedding);
+        debug!("Finding top {} document IDs for query", n);
+        let embedding = self.embedding_model.embed_document(query).await?;
+        let query_vec = SqliteStore::serialize_embedding(&embedding);
 
-        let rows = sqlx::query(
-            "SELECT rowid, distance FROM embeddings 
-             WHERE embedding MATCH ?1 
-             ORDER BY distance 
-             LIMIT ?2",
-        )
-        .bind(&query_vec)
-        .bind(n as i64)
-        .fetch_all(&self.store.pool)
-        .await
-        .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
+        let results = self
+            .store
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT d.doc_id, e.distance 
+                     FROM embeddings e
+                     JOIN documents d ON e.rowid = d.id
+                     WHERE e.embedding MATCH ?1  AND k = ?2
+                     ORDER BY e.distance",
+                )?;
 
-        let results = rows
-            .into_iter()
-            .map(|row| {
-                let distance: f64 = row.get("distance");
-                let id: String = row.get("rowid");
-                (distance, id)
+                let results = stmt
+                    .query_map(rusqlite::params![query_vec.as_bytes(), n], |row| {
+                        Ok((row.get::<_, f64>(1)?, row.get::<_, String>(0)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(results)
             })
-            .collect();
+            .await
+            .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
 
+        debug!("Found {} matching document IDs", results.len());
         Ok(results)
     }
 }

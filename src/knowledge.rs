@@ -3,20 +3,19 @@ use tracing::{debug, info};
 
 use rig::{
     embeddings::{EmbeddingModel, EmbeddingsBuilder},
-    vector_store::{
-        in_memory_store::{InMemoryVectorIndex, InMemoryVectorStore},
-        VectorStore,
-    },
+    vector_store::VectorStore,
 };
+
+use crate::stores::sqlite::{SqliteStore, SqliteVectorIndex};
 
 #[derive(Clone)]
 pub struct KnowledgeBase<M: EmbeddingModel> {
-    pub store: InMemoryVectorStore,
+    pub store: SqliteStore,
     model: M,
 }
 
 impl<M: EmbeddingModel> KnowledgeBase<M> {
-    pub fn new(store: InMemoryVectorStore, model: M) -> Self {
+    pub fn new(store: SqliteStore, model: M) -> Self {
         Self { store, model }
     }
 
@@ -43,7 +42,7 @@ impl<M: EmbeddingModel> KnowledgeBase<M> {
         Ok(())
     }
 
-    pub fn index(self) -> InMemoryVectorIndex<M> {
-        InMemoryVectorIndex::new(self.model, self.store)
+    pub fn index(self) -> SqliteVectorIndex<M> {
+        SqliteVectorIndex::new(self.model, self.store)
     }
 }
