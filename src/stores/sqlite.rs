@@ -9,6 +9,51 @@ use tokio_rusqlite::Connection;
 use tracing::{debug, info};
 use zerocopy::IntoBytes;
 
+#[derive(Debug, Deserialize)]
+pub struct Account {
+    pub id: i64,
+    pub name: String,
+    pub source_id: String,
+    pub source: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Conversation {
+    pub id: i64,
+    pub user_id: i64,
+    pub title: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Message {
+    pub id: i64,
+    pub conversation_id: i64,
+    pub role: String,
+    pub content: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Channel {
+    pub id: i64,
+    pub name: String,
+    pub source_id: String,
+    pub source: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+
+#[derive(Debug)]
+pub enum SqliteError {
+    DatabaseError(Box<dyn std::error::Error + Send + Sync>),
+    SerializationError(Box<dyn std::error::Error + Send + Sync>),
+}
+
 #[derive(Clone)]
 pub struct SqliteStore {
     conn: Connection,
@@ -30,6 +75,7 @@ impl SqliteStore {
         conn.call(|conn| {
             conn.execute_batch(
                 "BEGIN;
+                -- Document tables
                 CREATE TABLE IF NOT EXISTS documents (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     doc_id TEXT UNIQUE NOT NULL,
@@ -37,6 +83,53 @@ impl SqliteStore {
                 );
                 CREATE INDEX IF NOT EXISTS idx_doc_id ON documents(doc_id);
                 CREATE VIRTUAL TABLE IF NOT EXISTS embeddings USING vec0(embedding float[1536]);
+
+                -- User management tables
+                CREATE TABLE IF NOT EXISTS accounts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_source_id_source ON accounts(source_id, source);
+
+                -- Channel tables
+                CREATE TABLE IF NOT EXISTS channels (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id TEXT NOT NULL,
+                    channel_type TEXT NOT NULL, -- 'discord', 'twitter', 'telegram' etc
+                    name TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_channel_id_type ON channels(channel_id, channel_type);
+
+                -- Channel membership table
+                CREATE TABLE IF NOT EXISTS channel_members (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id INTEGER NOT NULL,
+                    account_id INTEGER NOT NULL,
+                    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (channel_id) REFERENCES channels(id),
+                    FOREIGN KEY (account_id) REFERENCES accounts(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_channel_members ON channel_members(channel_id, account_id);
+
+                -- Messages table
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id INTEGER NOT NULL,
+                    account_id INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (channel_id) REFERENCES channels(id),
+                    FOREIGN KEY (account_id) REFERENCES accounts(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id);
+                CREATE INDEX IF NOT EXISTS idx_messages_account ON messages(account_id);
+
                 COMMIT;",
             )
             .map_err(|e| tokio_rusqlite::Error::from(e))
@@ -49,6 +142,158 @@ impl SqliteStore {
 
     fn serialize_embedding(embedding: &Embedding) -> Vec<f32> {
         embedding.vec.iter().map(|x| *x as f32).collect()
+    }
+
+    pub async fn create_user(&self, name: String, source_id: String, source: String) -> Result<i64, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+                
+                let _ = tx.execute(
+                    "INSERT INTO accounts (name, source_id, source) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![name, source_id, source],
+                )?;
+
+                let id = tx.last_insert_rowid();
+                tx.commit()?;
+                
+                Ok(id)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    }
+
+    pub async fn get_user_by_source(&self, source_id: String, source: String) -> Result<Option<Account>, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, name, source_id, source, created_at, updated_at FROM accounts WHERE source_id = ?1 AND source = ?2"
+                )?;
+                
+                let account = stmt.query_row(rusqlite::params![source_id, source], |row| {
+                    Ok(Account {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        source_id: row.get(2)?,
+                        source: row.get(3)?,
+                        created_at: row.get::<_, String>(4)?.parse().unwrap(),
+                        updated_at: row.get::<_, String>(5)?.parse().unwrap(),
+                    })
+                }).optional()?;
+                
+                Ok(account)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    }
+
+    pub async fn create_conversation(&self, user_id: i64, title: String) -> Result<i64, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+                
+                let _ = tx.execute(
+                    "INSERT INTO conversations (user_id, title) VALUES (?1, ?2)",
+                    rusqlite::params![user_id, title],
+                )?;
+
+                let id = tx.last_insert_rowid();
+                tx.commit()?;
+                
+                Ok(id)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    }
+
+    pub async fn get_conversation(&self, id: i64) -> Result<Option<Conversation>, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, user_id, title, created_at, updated_at FROM conversations WHERE id = ?1"
+                )?;
+                
+                let conversation = stmt.query_row(rusqlite::params![id], |row| {
+                    Ok(Conversation {
+                        id: row.get(0)?,
+                        user_id: row.get(1)?,
+                        title: row.get(2)?,
+                        created_at: row.get::<_, String>(3)?.parse().unwrap(),
+                        updated_at: row.get::<_, String>(4)?.parse().unwrap(),
+                    })
+                }).optional()?;
+                
+                Ok(conversation)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    }
+
+    pub async fn get_conversations_by_user(&self, user_id: i64) -> Result<Vec<Conversation>, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, user_id, title, created_at, updated_at FROM conversations WHERE user_id = ?1"
+                )?;
+                
+                let conversations = stmt.query_map(rusqlite::params![user_id], |row| {
+                    Ok(Conversation {
+                        id: row.get(0)?,
+                        user_id: row.get(1)?,
+                        title: row.get(2)?,
+                        created_at: row.get::<_, String>(3)?.parse().unwrap(),
+                        updated_at: row.get::<_, String>(4)?.parse().unwrap(),
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+                
+                Ok(conversations)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    }
+
+    pub async fn create_message(&self, conversation_id: i64, role: String, content: String) -> Result<i64, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+                
+                let _ = tx.execute(
+                    "INSERT INTO messages (conversation_id, role, content) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![conversation_id, role, content],
+                )?;
+
+                let id = tx.last_insert_rowid();
+                tx.commit()?;
+                
+                Ok(id)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    }
+
+    pub async fn get_messages_by_conversation(&self, conversation_id: i64) -> Result<Vec<Message>, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, conversation_id, role, content, created_at FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC"
+                )?;
+                
+                let messages = stmt.query_map(rusqlite::params![conversation_id], |row| {
+                    Ok(Message {
+                        id: row.get(0)?,
+                        conversation_id: row.get(1)?,
+                        role: row.get(2)?,
+                        content: row.get(3)?,
+                        created_at: row.get::<_, String>(4)?.parse().unwrap(),
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+                
+                Ok(messages)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
     }
 }
 

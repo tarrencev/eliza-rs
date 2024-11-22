@@ -6,7 +6,7 @@ pub fn init_logging() {
                 .add_directive("asuka=debug".parse().unwrap())
                 .add_directive("hyper=off".parse().unwrap())
                 .add_directive("h2=off".parse().unwrap())
-                .add_directive("serenity=info".parse().unwrap())
+                .add_directive("serenity=off".parse().unwrap())
                 .add_directive("reqwest=off".parse().unwrap()),
         )
         .init();
