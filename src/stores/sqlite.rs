@@ -449,7 +449,7 @@ impl VectorStore for SqliteStore {
                 )?;
 
                 let result = stmt
-                    .query_row(&[query.as_bytes()], |row| {
+                    .query_row(rusqlite::params![query.as_bytes(), 1], |row| {
                         Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
                     })
                     .optional()?;
