@@ -304,6 +304,8 @@ impl VectorStore for SqliteStore {
         &mut self,
         documents: Vec<DocumentEmbeddings>,
     ) -> Result<(), VectorStoreError> {
+		
+		tracing::info!("Embedding size: {}", documents[0].embeddings[0].vec.len());
         info!("Adding {} documents to store", documents.len());
         self.conn
             .call(|conn| {
@@ -449,7 +451,7 @@ impl VectorStore for SqliteStore {
                 )?;
 
                 let result = stmt
-                    .query_row(&[query.as_bytes()], |row| {
+                    .query_row(rusqlite::params![query.as_bytes(), 1], |row| {
                         Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
                     })
                     .optional()?;
