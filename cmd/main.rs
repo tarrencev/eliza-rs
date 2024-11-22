@@ -5,11 +5,11 @@ use rig::{
     vector_store::in_memory_store::InMemoryVectorStore,
 };
 
-use asuka::agent::Agent;
 use asuka::character;
 use asuka::init_logging;
 use asuka::knowledge::KnowledgeBase;
 use asuka::loaders::github::GitLoader;
+use asuka::{agent::Agent, clients::discord::DiscordClient};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -46,7 +46,6 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging();
-
     dotenv::dotenv().ok();
 
     let args = Args::parse();
@@ -67,7 +66,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = InMemoryVectorStore::default();
     let mut knowledge = KnowledgeBase::new(store, embedding_model);
 
-    // Add some example documents
     knowledge
         .add_documents(
             repo.with_dir("src/pages/vrf")?
@@ -76,20 +74,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
 
-    let agent = Agent::new(character, completion_model)
-        .with_knowledge(&knowledge)
-        .builder()
-        .context(&format!(
-            "Current time: {}",
-            chrono::Local::now().format("%I:%M:%S %p, %Y-%m-%d")
-        ))
-        .build();
+    let agent = Agent::new(character, completion_model).with_knowledge(knowledge);
 
-    let response = agent
-        .prompt("Which rust example is best suited for the operation 1 + 2")
-        .await?;
+    let discord = DiscordClient::new(agent);
 
-    println!("{}", response);
+    discord.start(&args.discord_api_token).await?;
 
     Ok(())
 }

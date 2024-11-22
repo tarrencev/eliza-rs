@@ -44,7 +44,6 @@ impl<M: EmbeddingModel> KnowledgeBase<M> {
     }
 
     pub fn index(self) -> InMemoryVectorIndex<M> {
-        debug!("Creating vector index from KnowledgeBase");
         InMemoryVectorIndex::new(self.model, self.store)
     }
 }

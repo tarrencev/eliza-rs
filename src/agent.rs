@@ -3,24 +3,25 @@ use tracing::info;
 
 use crate::{character::Character, knowledge::KnowledgeBase};
 
-pub struct Agent<'a, M: CompletionModel, E: EmbeddingModel + 'static> {
+#[derive(Clone)]
+pub struct Agent<M: CompletionModel, E: EmbeddingModel + 'static> {
+    pub character: Character,
     completion_model: M,
-    character: Character,
-    knowledge_base: Option<&'a KnowledgeBase<E>>,
+    knowledge_base: Option<KnowledgeBase<E>>,
 }
 
-impl<'a, M: CompletionModel, E: EmbeddingModel> Agent<'a, M, E> {
+impl<M: CompletionModel, E: EmbeddingModel> Agent<M, E> {
     pub fn new(character: Character, completion_model: M) -> Self {
         info!(name = character.name, "Creating new agent");
 
         Self {
-            completion_model,
             character,
+            completion_model,
             knowledge_base: None,
         }
     }
 
-    pub fn with_knowledge(mut self, knowledge: &'a KnowledgeBase<E>) -> Self {
+    pub fn with_knowledge(mut self, knowledge: KnowledgeBase<E>) -> Self {
         self.knowledge_base = Some(knowledge);
         self
     }
@@ -30,7 +31,7 @@ impl<'a, M: CompletionModel, E: EmbeddingModel> Agent<'a, M, E> {
             .preamble(&self.character.preamble)
             .context(&format!("Your name: {}", self.character.name));
 
-        if let Some(kb) = self.knowledge_base {
+        if let Some(kb) = self.knowledge_base.clone() {
             builder = builder.dynamic_context(1, kb.clone().index());
         }
 
