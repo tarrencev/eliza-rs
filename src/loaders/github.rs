@@ -2,6 +2,7 @@ use git2::{FetchOptions, RemoteCallbacks, Repository};
 use rig::loaders::{file::FileLoaderError, FileLoader};
 use std::path::PathBuf;
 use thiserror::Error;
+use tracing::{debug, info};
 
 #[derive(Error, Debug)]
 pub enum GitLoaderError {
@@ -35,16 +36,17 @@ impl GitRepo {
 
     pub fn sync(&self) -> Result<Repository, GitLoaderError> {
         if self.path.exists() {
-            println!("Repository path exists at {:?}, resetting", self.path);
+            info!(path = ?self.path, "Repository path exists, updating");
             self.reset()
         } else {
-            println!("Repository path {:?} does not exist, cloning", self.path);
+            info!(path = ?self.path, "Repository path does not exist, cloning");
             self.clone()
         }
     }
 
     fn clone(&self) -> Result<Repository, GitLoaderError> {
         std::fs::create_dir_all(&self.base_path)?;
+        debug!(url = %self.url, path = ?self.path, "Cloning repository");
         Ok(Repository::clone(&self.url, &self.path)?)
     }
 
@@ -62,6 +64,7 @@ impl GitRepo {
             let main_commit = main_ref.peel_to_commit()?;
 
             let mut checkout_builder = git2::build::CheckoutBuilder::new();
+
             repo.reset(
                 &main_commit.as_object(),
                 git2::ResetType::Hard,
@@ -80,6 +83,7 @@ pub struct GitLoader<'a> {
 
 impl<'a> GitLoader<'a> {
     pub fn new(url: String, path: &'a str) -> Result<Self, GitLoaderError> {
+        debug!(url = %url, path = path, "Creating new GitLoader");
         let repo = GitRepo::new(url, PathBuf::from(path));
         repo.sync()?;
         Ok(Self { path, repo })
@@ -106,6 +110,7 @@ impl<'a> GitLoader<'a> {
         let path = self.repo.path.to_str().unwrap().trim_end_matches('/');
         let pattern = pattern.trim_start_matches('/');
         let glob = Box::leak(format!("{}/{}", path, pattern).into_boxed_str());
+
         FileLoader::with_glob(glob)
     }
 

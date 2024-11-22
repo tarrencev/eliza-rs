@@ -7,6 +7,7 @@ use rig::{
 
 use asuka::agent::Agent;
 use asuka::character;
+use asuka::init_logging;
 use asuka::knowledge::KnowledgeBase;
 use asuka::loaders::github::GitLoader;
 
@@ -43,7 +44,9 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    init_logging();
+
     dotenv::dotenv().ok();
 
     let args = Args::parse();
@@ -55,8 +58,11 @@ async fn main() -> anyhow::Result<()> {
     let character: character::Character =
         toml::from_str(&character_content).expect("Failed to parse character TOML");
 
-    let client = providers::openai::Client::new(&args.openai_api_key);
-    let embedding_model = client.embedding_model(openai::TEXT_EMBEDDING_3_SMALL);
+    let oai = providers::openai::Client::new(&args.openai_api_key);
+    let embedding_model = oai.embedding_model(openai::TEXT_EMBEDDING_3_SMALL);
+
+    let xai = providers::xai::Client::new(&args.xai_api_key);
+    let completion_model = xai.completion_model(providers::xai::GROK_BETA);
 
     let store = InMemoryVectorStore::default();
     let mut knowledge = KnowledgeBase::new(store, embedding_model);
@@ -70,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
 
-    let agent = Agent::new(character, &args.xai_api_key)
+    let agent = Agent::new(character, completion_model)
         .with_knowledge(&knowledge)
         .builder()
         .context(&format!(

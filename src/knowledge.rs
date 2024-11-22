@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use tracing::{debug, info};
 
 use rig::{
     embeddings::{EmbeddingModel, EmbeddingsBuilder},
@@ -23,19 +24,27 @@ impl<M: EmbeddingModel> KnowledgeBase<M> {
     where
         I: IntoIterator<Item = (PathBuf, String)>,
     {
+        info!("Adding documents to KnowledgeBase");
         let mut builder = EmbeddingsBuilder::new(self.model.clone());
 
         for (id, content) in documents {
-            builder = builder.simple_document(id.to_str().unwrap(), &content);
+            let id_str = id.to_str().unwrap();
+            debug!(document_id = id_str, "Adding document");
+            builder = builder.simple_document(id_str, &content);
         }
 
+        debug!("Building embeddings");
         let embeddings = builder.build().await?;
+
+        debug!("Adding embeddings to store");
         self.store.add_documents(embeddings).await?;
 
+        info!("Successfully added documents to KnowledgeBase");
         Ok(())
     }
 
     pub fn index(self) -> InMemoryVectorIndex<M> {
+        debug!("Creating vector index from KnowledgeBase");
         InMemoryVectorIndex::new(self.model, self.store)
     }
 }
