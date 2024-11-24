@@ -305,7 +305,6 @@ impl VectorStore for SqliteStore {
         documents: Vec<DocumentEmbeddings>,
     ) -> Result<(), VectorStoreError> {
 		
-		tracing::info!("Embedding size: {}", documents[0].embeddings[0].vec.len());
         info!("Adding {} documents to store", documents.len());
         self.conn
             .call(|conn| {

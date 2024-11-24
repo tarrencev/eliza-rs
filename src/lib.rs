@@ -18,3 +18,4 @@ pub mod clients;
 pub mod knowledge;
 pub mod loaders;
 pub mod stores;
+pub mod tools;
