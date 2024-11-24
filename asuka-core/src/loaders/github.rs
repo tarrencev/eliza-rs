@@ -66,7 +66,7 @@ impl GitRepo {
             let mut checkout_builder = git2::build::CheckoutBuilder::new();
 
             repo.reset(
-                &main_commit.as_object(),
+                main_commit.as_object(),
                 git2::ResetType::Hard,
                 Some(&mut checkout_builder),
             )?;
@@ -101,12 +101,13 @@ impl<'a> GitLoader<'a> {
     /// Create a [FileLoader] for all `.txt` files that match the glob "files/*.txt".
     ///
     /// ```rust
-    /// let loader = FileLoader::with_glob("files/*.txt")?;
+	/// use rig::loaders::FileLoader;
+    /// let loader = FileLoader::with_glob("files/*.txt").unwrap();
     /// ```
-    pub fn with_glob<'b>(
+    pub fn with_glob(
         self,
-        pattern: &'b str,
-    ) -> Result<FileLoader<'b, Result<PathBuf, FileLoaderError>>, FileLoaderError> {
+        pattern: &str,
+    ) -> Result<FileLoader<'_, Result<PathBuf, FileLoaderError>>, FileLoaderError> {
         let path = self.repo.path.to_str().unwrap().trim_end_matches('/');
         let pattern = pattern.trim_start_matches('/');
         let glob = Box::leak(format!("{}/{}", path, pattern).into_boxed_str());
@@ -120,7 +121,8 @@ impl<'a> GitLoader<'a> {
     /// Create a [FileLoader] for all files that are in the directory "files" (ignores subdirectories).
     ///
     /// ```rust
-    /// let loader = FileLoader::with_dir("files")?;
+	/// use rig::loaders::FileLoader;
+    /// let loader = FileLoader::with_dir("files").unwrap();
     /// ```
     pub fn with_dir(
         self,
