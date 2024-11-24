@@ -1,49 +1,9 @@
-[package]
-name = "asuka"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = ["asuka-core", "asuka-starknet", "examples"]
+resolver = "2"
 
-[dependencies]
-arrow-array = "53.3.0"
-async-trait = "0.1"
-anyhow = "1.0"
-clap = { version = "4.5.21", features = ["derive", "env"] }
-chrono = "0.4.20-rc.1"
-dotenv = "0.15.0"
-ekubo_sdk = "0.1.19"
-futures = "0.3.31"
-git2 = "0.19.0"
-idna = "1.0.3"
-lancedb = "0.13.0"
-octocrab = "0.42.1"
+[workspace.dependencies]
 rig-core = { git = "https://github.com/0xPlaygrounds/rig" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serenity = { version = "0.12", features = [
-    "client",
-    "gateway",
-    "rustls_backend",
-    "model",
-    "cache",
-] }
-rusqlite = { version = "0.32", features = ["bundled"] }
-sqlite-vec = "0.1"
-starknet = "0.12.0"
 thiserror = "2.0.3"
-tokio = { version = "1.36", features = ["full"] }
-tokio-rusqlite = { git = "https://github.com/programatik29/tokio-rusqlite", features = [
-    "bundled",
-] }
-toml = "0.8.19"
-walkdir = "2.4"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-zerocopy = "0.8.10"
-
-[[bin]]
-name = "agent"
-path = "cmd/main.rs"
-
-[lib]
-name = "asuka"
-path = "src/lib.rs"

@@ -1,0 +1,16 @@
+[package]
+name = "asuka-examples"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+asuka-core = { path = "../asuka-core" }
+tokio = { version = "1.0", features = ["full"] }
+clap = { version = "4.0", features = ["derive", "env"] }
+dotenv = "0.15"
+toml = "0.8"
+rig-core.workspace = true
+
+[[example]]
+name = "main"
+path = "src/main.rs"

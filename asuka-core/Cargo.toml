@@ -1,0 +1,39 @@
+[package]
+name = "asuka-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arrow-array = "53.3.0"
+async-trait = "0.1"
+anyhow = "1.0"
+clap = { version = "4.5.21", features = ["derive", "env"] }
+chrono = "0.4.20-rc.1"
+dotenv = "0.15.0"
+ekubo_sdk = "0.1.19"
+futures = "0.3.31"
+git2 = "0.19.0"
+idna = "1.0.3"
+octocrab = "0.42.1"
+rig-core.workspace = true
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+serenity = { version = "0.12", features = [
+    "client",
+    "gateway",
+    "rustls_backend",
+    "model",
+    "cache",
+] }
+sqlite-vec = "0.1"
+thiserror = "2.0.3"
+tokio = { version = "1.36", features = ["full"] }
+tokio-rusqlite = { git = "https://github.com/programatik29/tokio-rusqlite", features = [
+    "bundled",
+] }
+toml = "0.8.19"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+walkdir = "2.4"
+zerocopy = "0.8.10"

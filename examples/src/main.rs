@@ -1,11 +1,11 @@
 use clap::{command, Parser};
 use rig::providers::{self, openai};
 
-use asuka::init_logging;
-use asuka::knowledge::KnowledgeBase;
-use asuka::loaders::github::GitLoader;
-use asuka::{agent::Agent, clients::discord::DiscordClient};
-use asuka::{character, stores::sqlite::SqliteStore};
+use asuka_core::init_logging;
+use asuka_core::knowledge::KnowledgeBase;
+use asuka_core::loaders::github::GitLoader;
+use asuka_core::{agent::Agent, clients::discord::DiscordClient};
+use asuka_core::{character, stores::sqlite::SqliteStore};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

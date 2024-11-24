@@ -1,0 +1,11 @@
+[package]
+name = "askua-starknet"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rig-core.workspace = true
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+starknet = "0.12.0"
