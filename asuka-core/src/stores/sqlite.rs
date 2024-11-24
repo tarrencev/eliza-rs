@@ -361,7 +361,7 @@ impl SqliteStore {
 			.call(move |conn| {
 				Ok(conn.prepare("SELECT id, channel_id, account_id, role, content, created_at FROM messages WHERE id = ?1")?
 					.query_row(rusqlite::params![id], |row| {
-						let created_at_str: String = row.get(4)?;
+						let created_at_str: String = row.get(5)?;
 						tracing::info!("created_at_str: {}", created_at_str);
                     let created_at = chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%d %H:%M:%S")
                         .map_err(|_| rusqlite::Error::InvalidQuery)?
@@ -397,7 +397,7 @@ impl SqliteStore {
 
                 let messages = stmt
                     .query_map(rusqlite::params![channel_id, limit], |row| {
-                        let created_at_str: String = row.get(4)?;
+                        let created_at_str: String = row.get(5)?;
                         let created_at = chrono::NaiveDateTime::parse_from_str(
                             &created_at_str,
                             "%Y-%m-%d %H:%M:%S",
