@@ -25,7 +25,6 @@ serenity = { version = "0.12", features = [
     "model",
     "cache",
 ] }
-sqlite-vec = "0.1"
 thiserror = "2.0.3"
 tokio = { version = "1.36", features = ["full"] }
 tokio-rusqlite = { git = "https://github.com/programatik29/tokio-rusqlite", features = [

@@ -6,16 +6,16 @@ use rig::{
     vector_store::VectorStore,
 };
 
-use crate::stores::sqlite::{SqliteStore, SqliteVectorIndex};
+use crate::stores::sqlite::{SqliteVectorIndex, SqliteVectorStore};
 
 #[derive(Clone)]
 pub struct KnowledgeBase<M: EmbeddingModel> {
-    pub store: SqliteStore,
+    pub store: SqliteVectorStore<M>,
     model: M,
 }
 
 impl<M: EmbeddingModel> KnowledgeBase<M> {
-    pub fn new(store: SqliteStore, model: M) -> Self {
+    pub fn new(store: SqliteVectorStore<M>, model: M) -> Self {
         Self { store, model }
     }
 

@@ -1,17 +1,24 @@
+use asuka_core::stores::sqlite::SqliteVectorStore;
+use asuka_starknet::add_token::AddToken;
+use asuka_starknet::transfer::Transfer;
 use clap::{command, Parser};
+use rig::cli_chatbot;
 use rig::providers::{self, openai};
 
+use asuka_core::character;
 use asuka_core::init_logging;
 use asuka_core::knowledge::KnowledgeBase;
 use asuka_core::loaders::github::GitLoader;
 use asuka_core::{agent::Agent, clients::discord::DiscordClient};
-use asuka_core::{character, stores::sqlite::SqliteStore};
+use sqlite_vec::sqlite3_vec_init;
+use tokio_rusqlite::ffi::sqlite3_auto_extension;
+use tokio_rusqlite::Connection;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Path to character profile TOML file
-    #[arg(long, default_value = "src/characters/shinobi.toml")]
+    #[arg(long, default_value = "examples/src/characters/shinobi.toml")]
     character: String,
 
     /// Path to database
@@ -59,7 +66,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let xai = providers::xai::Client::new(&args.xai_api_key);
     let completion_model = xai.completion_model(providers::xai::GROK_BETA);
 
-    let store = SqliteStore::new(args.db_path).await?;
+    // Initialize the `sqlite-vec`extension
+    // See: https://alexgarcia.xyz/sqlite-vec/rust.html
+    unsafe {
+        sqlite3_auto_extension(Some(std::mem::transmute(sqlite3_vec_init as *const ())));
+    }
+
+    let conn = Connection::open(args.db_path).await?;
+    let store = SqliteVectorStore::new(conn.clone(), &embedding_model).await?;
     let mut knowledge = KnowledgeBase::new(store, embedding_model);
 
     knowledge
@@ -71,10 +85,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     let agent = Agent::new(character, completion_model).with_knowledge(knowledge);
+    let builder = agent.builder();
 
-    let discord = DiscordClient::new(agent);
+    cli_chatbot::cli_chatbot(
+        builder
+            .context("You have several tools available to you, use them when prompted.")
+            .tool(AddToken::new(conn.clone()))
+            .tool(Transfer::new(conn))
+            .build(),
+    )
+    .await?;
 
-    discord.start(&args.discord_api_token).await?;
+    // let discord = DiscordClient::new(agent);
+
+    // discord.start(&args.discord_api_token).await?;
 
     Ok(())
 }
