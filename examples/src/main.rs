@@ -73,8 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let conn = Connection::open(args.db_path).await?;
-    let store = SqliteVectorStore::new(conn.clone(), &embedding_model).await?;
-    let mut knowledge = KnowledgeBase::new(store, embedding_model);
+    let mut knowledge = KnowledgeBase::new(conn.clone(), embedding_model).await?;
 
     knowledge
         .add_documents(
@@ -84,7 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
 
-    let agent = Agent::new(character, completion_model).with_knowledge(knowledge);
+    let agent = Agent::new(character, completion_model, knowledge);
     let builder = agent.builder();
 
     cli_chatbot::cli_chatbot(

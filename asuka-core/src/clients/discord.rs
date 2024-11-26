@@ -8,6 +8,8 @@ use serenity::model::gateway::Ready;
 use serenity::prelude::*;
 use tracing::{error, info};
 
+use crate::knowledge::{ChannelType, IntoKnowledgeMessage, Source};
+
 #[derive(Clone)]
 pub struct DiscordClient<M: CompletionModel, E: EmbeddingModel + 'static> {
     agent: Agent<M, E>,
@@ -36,14 +38,31 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> DiscordClient<M,
     }
 }
 
+impl IntoKnowledgeMessage for serenity::model::channel::Message {
+    fn into_knowledge_parts(&self) -> (String, String, ChannelType, Source, String) {
+        (
+            self.id.to_string(),
+            self.channel_id.to_string(),
+            ChannelType::Text, // Could be made smarter based on channel type
+            Source::Discord,
+            self.content.clone(),
+        )
+    }
+}
+
 #[async_trait]
 impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> EventHandler
     for DiscordClient<M, E>
 {
     async fn message(&self, ctx: Context, msg: Message) {
-        // Ignore messages from bots to prevent potential loops
         if msg.author.bot {
             return;
+        }
+
+        let knowledge = self.agent.knowledge();
+
+        if let Err(err) = knowledge.create_message(&msg).await {
+            error!(?err, "Failed to store message");
         }
 
         let agent = self
