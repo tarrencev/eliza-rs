@@ -124,7 +124,7 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> EventHandler
                 "Current time: {}",
                 chrono::Local::now().format("%I:%M:%S %p, %Y-%m-%d")
             ))
-            .context(&format!("Discord messages have a {MAX_MESSAGE_LENGTH} character limit. If your response is longer than {MAX_MESSAGE_LENGTH} characters, split it into multiple messages using {MESSAGE_SPLIT} as a separator. Split messages at natural breakpoints like paragraph endings or complete thoughts."))
+            .context("Please keep your responses concise and under 2000 characters when possible.")
             .build();
 
         let response = match agent.prompt(&msg.content).await {
@@ -136,12 +136,38 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> EventHandler
         };
 
         debug!(response = %response, "Generated response");
-        for message in response.split(MESSAGE_SPLIT) {
-            let message = message.trim();
-            if !message.is_empty() {
-                if let Err(why) = msg.channel_id.say(&ctx.http, message).await {
-                    error!(?why, "Failed to send message");
+
+        // Split response into chunks of at most MAX_MESSAGE_LENGTH characters
+        // Try to split on sentence boundaries first, then fallback to word boundaries
+        let mut current_chunk = String::new();
+        let mut chunks = Vec::new();
+
+        for line in response.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            if current_chunk.len() + line.len() + 1 <= MAX_MESSAGE_LENGTH {
+                if !current_chunk.is_empty() {
+                    current_chunk.push('\n');
                 }
+                current_chunk.push_str(line);
+            } else {
+                if !current_chunk.is_empty() {
+                    chunks.push(current_chunk);
+                }
+                current_chunk = line.to_string();
+            }
+        }
+
+        if !current_chunk.is_empty() {
+            chunks.push(current_chunk);
+        }
+
+        for chunk in chunks {
+            if let Err(why) = msg.channel_id.say(&ctx.http, chunk).await {
+                error!(?why, "Failed to send message");
             }
         }
     }

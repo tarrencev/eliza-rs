@@ -16,6 +16,7 @@ pub enum Source {
     Telegram,
     Github,
     X,
+    Twitter,
 }
 
 impl Source {
@@ -25,6 +26,7 @@ impl Source {
             Source::Telegram => "telegram",
             Source::Github => "github",
             Source::X => "x",
+            Source::Twitter => "twitter",
         }
     }
 
@@ -34,6 +36,7 @@ impl Source {
             "telegram" => Some(Source::Telegram),
             "github" => Some(Source::Github),
             "x" => Some(Source::X),
+            "twitter" => Some(Source::Twitter),
             _ => None,
         }
     }

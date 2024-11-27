@@ -91,18 +91,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let attention = Attention::new(config, should_respond_completion_model);
 
-    let discord = DiscordClient::new(agent, attention);
-    discord.start(&args.discord_api_token).await?;
+    // let discord = DiscordClient::new(agent, attention);
+    // discord.start(&args.discord_api_token).await?;
 
-    // let builder = agent.builder();
-    // cli_chatbot::cli_chatbot(
-    //     builder
-    //         .context("You have several tools available to you, use them when prompted.")
-    //         .tool(AddToken::new(conn.clone()))
-    //         .tool(Transfer::new(conn))
-    //         .build(),
-    // )
-    // .await?;
+    let builder = agent.builder();
+    cli_chatbot::cli_chatbot(
+        builder
+            .context("You have several tools available to you, use them when prompted.")
+            .tool(AddToken::new(conn.clone()))
+            .tool(Transfer::new(conn))
+            .build(),
+    )
+    .await?;
 
     Ok(())
 }
