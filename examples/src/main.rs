@@ -1,9 +1,5 @@
 use asuka_core::attention::{Attention, AttentionConfig};
-use asuka_core::stores::sqlite::SqliteVectorStore;
-use asuka_starknet::add_token::AddToken;
-use asuka_starknet::transfer::Transfer;
 use clap::{command, Parser};
-use rig::cli_chatbot;
 use rig::providers::{self, openai};
 
 use asuka_core::character;
@@ -91,18 +87,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let attention = Attention::new(config, should_respond_completion_model);
 
-    // let discord = DiscordClient::new(agent, attention);
-    // discord.start(&args.discord_api_token).await?;
-
-    let builder = agent.builder();
-    cli_chatbot::cli_chatbot(
-        builder
-            .context("You have several tools available to you, use them when prompted.")
-            .tool(AddToken::new(conn.clone()))
-            .tool(Transfer::new(conn))
-            .build(),
-    )
-    .await?;
+    let discord = DiscordClient::new(agent, attention);
+    discord.start(&args.discord_api_token).await?;
 
     Ok(())
 }
