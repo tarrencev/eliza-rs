@@ -16,6 +16,35 @@ pub struct SwapError;
 #[derive(Deserialize, Serialize)]
 pub struct Swap;
 
+#[derive(Deserialize)]
+struct PoolKey {
+    token0: String,
+    token1: String,
+    fee: String,
+    tick_spacing: i32,
+    extension: String,
+}
+
+#[derive(Deserialize)]
+struct Route {
+    pool_key: PoolKey,
+    sqrt_ratio_limit: String,
+    skip_ahead: i32,
+}
+
+#[derive(Deserialize)]
+struct Split {
+    amount: String,
+    specified_amount: String,
+    route: Vec<Route>,
+}
+
+#[derive(Deserialize)]
+struct QuoteResponse {
+    total: String,
+    splits: Vec<Split>,
+}
+
 impl Tool for Swap {
     const NAME: &'static str = "swa[";
 
@@ -44,7 +73,26 @@ impl Tool for Swap {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let result = args.a + args.b;
-        Ok(result)
+        let url = format!(
+            "https://mainnet-api.ekubo.org/quote/{}/{}/{}",
+            "-1e9", // Hardcoded amount for example
+            args.a.to_string(),
+            args.b.to_string()
+        );
+
+        let client = reqwest::Client::new();
+        let response = client
+            .get(&url)
+            .header("accept", "application/json")
+            .send()
+            .await
+            .map_err(|_| SwapError)?
+            .json::<QuoteResponse>()
+            .await
+            .map_err(|_| SwapError)?;
+
+        let total = Felt::from_hex(&response.total).map_err(|_| SwapError)?;
+
+        Ok(total)
     }
 }
