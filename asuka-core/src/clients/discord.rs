@@ -14,7 +14,7 @@ use crate::attention::{Attention, AttentionContext};
 use crate::knowledge::{ChannelType, IntoKnowledgeMessage, Source};
 use crate::{agent::Agent, attention::AttentionCommand};
 
-const MESSAGE_SPLIT: &str = "[MSG_SPLIT]";
+const MIN_CHUNK_LENGTH: usize = 100;
 const MAX_MESSAGE_LENGTH: usize = 1500;
 const MAX_HISTORY_MESSAGES: i64 = 10;
 
@@ -137,33 +137,7 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> EventHandler
 
         debug!(response = %response, "Generated response");
 
-        // Split response into chunks of at most MAX_MESSAGE_LENGTH characters
-        // Try to split on sentence boundaries first, then fallback to word boundaries
-        let mut current_chunk = String::new();
-        let mut chunks = Vec::new();
-
-        for line in response.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-
-            if current_chunk.len() + line.len() + 1 <= MAX_MESSAGE_LENGTH {
-                if !current_chunk.is_empty() {
-                    current_chunk.push('\n');
-                }
-                current_chunk.push_str(line);
-            } else {
-                if !current_chunk.is_empty() {
-                    chunks.push(current_chunk);
-                }
-                current_chunk = line.to_string();
-            }
-        }
-
-        if !current_chunk.is_empty() {
-            chunks.push(current_chunk);
-        }
+        let chunks = chunk_message(&response, MAX_MESSAGE_LENGTH, MIN_CHUNK_LENGTH);
 
         for chunk in chunks {
             if let Err(why) = msg.channel_id.say(&ctx.http, chunk).await {
@@ -175,5 +149,115 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> EventHandler
     async fn ready(&self, _: Context, ready: Ready) {
         info!(name = self.agent.character.name, "Bot connected");
         info!(guild_count = ready.guilds.len(), "Serving guilds");
+    }
+}
+
+pub fn chunk_message(text: &str, max_length: usize, min_chunk_length: usize) -> Vec<String> {
+    // Base case: if text is shorter than min_chunk_length, return as single chunk
+    if text.len() <= min_chunk_length {
+        return vec![text.to_string()];
+    }
+
+    let mut chunks = Vec::new();
+
+    // Find split point for current chunk
+    let mut split_index = text.len();
+    let mut in_heading = false;
+
+    for (i, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        // Start new chunk on headings
+        if line.starts_with('#') {
+            if i > 0 {
+                split_index = text.find(line).unwrap_or(text.len());
+                in_heading = true;
+                break;
+            }
+        }
+
+        // Check if adding this line would exceed max_length
+        let line_start = text.find(line).unwrap_or(text.len());
+        if line_start + line.len() > max_length && i > 0 {
+            split_index = line_start;
+            break;
+        }
+    }
+
+    // Split text and recurse
+    if split_index < text.len() {
+        let (chunk, rest) = text.split_at(split_index);
+        let mut chunk = chunk.trim().to_string();
+
+        // Add newline after chunk if we're not splitting on a heading
+        if !in_heading && !rest.trim().starts_with('#') {
+            chunk.push('\n');
+        }
+
+        // Strip trailing newline if it's the last character
+        if chunk.ends_with('\n') {
+            chunk.pop();
+        }
+
+        chunks.push(chunk);
+        chunks.extend(chunk_message(rest.trim(), max_length, min_chunk_length));
+    } else {
+        chunks.push(text.trim().to_string());
+    }
+
+    chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chunk_message_single_chunk() {
+        let text = "This is a short message";
+        let chunks = chunk_message(text, 100, 1000);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], text);
+    }
+
+    #[test]
+    fn test_chunk_message_multiple_chunks() {
+        let text = "Line 1\nLine 2\nLine 3";
+        let chunks = chunk_message(text, 10, 5);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0], "Line 1");
+        assert_eq!(chunks[1], "Line 2");
+        assert_eq!(chunks[2], "Line 3");
+    }
+
+    #[test]
+    fn test_chunk_message_empty_lines() {
+        let text = "Line 1\n\n\nLine 2";
+        let chunks = chunk_message(text, 100, 1000);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "Line 1\n\n\nLine 2");
+    }
+
+    #[test]
+    fn test_chunk_message_markdown() {
+        let text = "# Heading 1\nSome text under heading 1\n## Heading 2\nMore text\n# Heading 3\nFinal text";
+        let chunks = chunk_message(text, 100, 50);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0], "# Heading 1\nSome text under heading 1");
+        assert_eq!(
+            chunks[1],
+            "## Heading 2\nMore text\n# Heading 3\nFinal text"
+        );
+    }
+
+    #[test]
+    fn test_no_chunking_under_min_length() {
+        let text = "This is a message that won't be chunked because it's under the minimum length";
+        let chunks = chunk_message(text, 10, 1000);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], text);
     }
 }
