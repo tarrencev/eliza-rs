@@ -41,6 +41,7 @@ impl Source {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChannelType {
+    DirectMessage,
     Text,
     Voice,
     Thread,
@@ -49,6 +50,7 @@ pub enum ChannelType {
 impl ChannelType {
     pub fn as_str(&self) -> &'static str {
         match self {
+            ChannelType::DirectMessage => "direct_message",
             ChannelType::Text => "text",
             ChannelType::Voice => "voice",
             ChannelType::Thread => "thread",
@@ -57,6 +59,7 @@ impl ChannelType {
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
+            "direct_message" => Some(ChannelType::DirectMessage),
             "text" => Some(ChannelType::Text),
             "voice" => Some(ChannelType::Voice),
             "thread" => Some(ChannelType::Thread),
@@ -102,7 +105,7 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
                 -- Channel tables
                 CREATE TABLE IF NOT EXISTS channels (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    channel_id TEXT NOT NULL,
+                    channel_id TEXT UNIQUE NOT NULL,
                     channel_type TEXT NOT NULL,
                     source TEXT NOT NULL,
                     name TEXT,

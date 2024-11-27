@@ -1,3 +1,4 @@
+use asuka_core::attention::{Attention, AttentionConfig};
 use asuka_core::stores::sqlite::SqliteVectorStore;
 use asuka_starknet::add_token::AddToken;
 use asuka_starknet::transfer::Transfer;
@@ -22,7 +23,7 @@ struct Args {
     character: String,
 
     /// Path to database
-    #[arg(long, default_value = "db.sqlite")]
+    #[arg(long, default_value = ":memory:")]
     db_path: String,
 
     /// Discord API token (can also be set via DISCORD_API_TOKEN env var)
@@ -62,9 +63,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let oai = providers::openai::Client::new(&args.openai_api_key);
     let embedding_model = oai.embedding_model(openai::TEXT_EMBEDDING_3_SMALL);
-
-    let xai = providers::xai::Client::new(&args.xai_api_key);
-    let completion_model = xai.completion_model(providers::xai::GROK_BETA);
+    let completion_model = oai.completion_model(openai::GPT_4O);
+    let should_respond_completion_model = oai.completion_model(openai::GPT_35_TURBO_0125);
 
     // Initialize the `sqlite-vec`extension
     // See: https://alexgarcia.xyz/sqlite-vec/rust.html
@@ -84,20 +84,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     let agent = Agent::new(character, completion_model, knowledge);
-    let builder = agent.builder();
 
-    cli_chatbot::cli_chatbot(
-        builder
-            .context("You have several tools available to you, use them when prompted.")
-            .tool(AddToken::new(conn.clone()))
-            .tool(Transfer::new(conn))
-            .build(),
-    )
-    .await?;
+    let config = AttentionConfig {
+        bot_names: vec![agent.character.name.clone()],
+        ..Default::default()
+    };
+    let attention = Attention::new(config, should_respond_completion_model);
 
-    // let discord = DiscordClient::new(agent);
+    let discord = DiscordClient::new(agent, attention);
+    discord.start(&args.discord_api_token).await?;
 
-    // discord.start(&args.discord_api_token).await?;
+    // let builder = agent.builder();
+    // cli_chatbot::cli_chatbot(
+    //     builder
+    //         .context("You have several tools available to you, use them when prompted.")
+    //         .tool(AddToken::new(conn.clone()))
+    //         .tool(Transfer::new(conn))
+    //         .build(),
+    // )
+    // .await?;
 
     Ok(())
 }
