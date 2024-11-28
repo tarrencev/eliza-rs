@@ -1,21 +1,25 @@
+use asuka_core::attention::{Attention, AttentionConfig};
 use clap::{command, Parser};
 use rig::providers::{self, openai};
 
+use asuka_core::character;
 use asuka_core::init_logging;
 use asuka_core::knowledge::KnowledgeBase;
 use asuka_core::loaders::github::GitLoader;
 use asuka_core::{agent::Agent, clients::discord::DiscordClient};
-use asuka_core::{character, stores::sqlite::SqliteStore};
+use sqlite_vec::sqlite3_vec_init;
+use tokio_rusqlite::ffi::sqlite3_auto_extension;
+use tokio_rusqlite::Connection;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Path to character profile TOML file
-    #[arg(long, default_value = "src/characters/shinobi.toml")]
+    #[arg(long, default_value = "examples/src/characters/shinobi.toml")]
     character: String,
 
     /// Path to database
-    #[arg(long, default_value = "db.sqlite")]
+    #[arg(long, default_value = ":memory:")]
     db_path: String,
 
     /// Discord API token (can also be set via DISCORD_API_TOKEN env var)
@@ -55,12 +59,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let oai = providers::openai::Client::new(&args.openai_api_key);
     let embedding_model = oai.embedding_model(openai::TEXT_EMBEDDING_3_SMALL);
+    let completion_model = oai.completion_model(openai::GPT_4O);
+    let should_respond_completion_model = oai.completion_model(openai::GPT_35_TURBO_0125);
 
-    let xai = providers::xai::Client::new(&args.xai_api_key);
-    let completion_model = xai.completion_model(providers::xai::GROK_BETA);
+    // Initialize the `sqlite-vec`extension
+    // See: https://alexgarcia.xyz/sqlite-vec/rust.html
+    unsafe {
+        sqlite3_auto_extension(Some(std::mem::transmute(sqlite3_vec_init as *const ())));
+    }
 
-    let store = SqliteStore::new(args.db_path).await?;
-    let mut knowledge = KnowledgeBase::new(store, embedding_model);
+    let conn = Connection::open(args.db_path).await?;
+    let mut knowledge = KnowledgeBase::new(conn.clone(), embedding_model).await?;
 
     knowledge
         .add_documents(
@@ -70,10 +79,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
 
-    let agent = Agent::new(character, completion_model).with_knowledge(knowledge);
+    let agent = Agent::new(character, completion_model, knowledge);
 
-    let discord = DiscordClient::new(agent);
+    let config = AttentionConfig {
+        bot_names: vec![agent.character.name.clone()],
+        ..Default::default()
+    };
+    let attention = Attention::new(config, should_respond_completion_model);
 
+    let discord = DiscordClient::new(agent, attention);
     discord.start(&args.discord_api_token).await?;
 
     Ok(())

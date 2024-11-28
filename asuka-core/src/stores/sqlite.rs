@@ -1,51 +1,12 @@
 use chrono::DateTime;
 use rig::embeddings::{DocumentEmbeddings, Embedding, EmbeddingModel};
 use rig::vector_store::{VectorStore, VectorStoreError, VectorStoreIndex};
-use rusqlite::ffi::sqlite3_auto_extension;
 use rusqlite::OptionalExtension;
 use serde::Deserialize;
-use sqlite_vec::sqlite3_vec_init;
-use std::path::Path;
+use std::marker::PhantomData;
 use tokio_rusqlite::Connection;
 use tracing::{debug, info};
 use zerocopy::IntoBytes;
-
-#[derive(Debug, Deserialize)]
-pub struct Account {
-    pub id: i64,
-    pub name: String,
-    pub source: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Conversation {
-    pub id: i64,
-    pub user_id: i64,
-    pub title: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Message {
-    pub id: i64,
-    pub channel_id: i64,
-    pub account_id: i64,
-    pub role: String,
-    pub content: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Channel {
-    pub id: i64,
-    pub name: String,
-    pub source: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
 
 #[derive(Debug)]
 pub enum SqliteError {
@@ -54,404 +15,52 @@ pub enum SqliteError {
 }
 
 #[derive(Clone)]
-pub struct SqliteStore {
+pub struct SqliteVectorStore<E: EmbeddingModel> {
     conn: Connection,
+    _phantom: PhantomData<E>,
 }
 
-impl SqliteStore {
-    pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, VectorStoreError> {
-        info!("Initializing SQLite store at {:?}", path.as_ref());
-        unsafe {
-            sqlite3_auto_extension(Some(std::mem::transmute(sqlite3_vec_init as *const ())));
-        }
-
-        let conn = Connection::open(path)
-            .await
-            .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
-
-        debug!("Running initial migrations");
+impl<E: EmbeddingModel> SqliteVectorStore<E> {
+    pub async fn new(conn: Connection, embedding_model: &E) -> Result<Self, VectorStoreError> {
         // Run migrations or create tables if they don't exist
-        conn.call(|conn| {
-            conn.execute_batch(
+        let dims = embedding_model.ndims();
+        conn.call(move |conn| {
+            conn.execute_batch(&format!(
                 "BEGIN;
                 -- Document tables
                 CREATE TABLE IF NOT EXISTS documents (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    doc_id TEXT UNIQUE NOT NULL,
+                    document_id TEXT UNIQUE NOT NULL,
                     document TEXT NOT NULL
                 );
-                CREATE INDEX IF NOT EXISTS idx_doc_id ON documents(doc_id);
-                CREATE VIRTUAL TABLE IF NOT EXISTS embeddings USING vec0(embedding float[1536]);
-
-                -- User management tables
-                CREATE TABLE IF NOT EXISTS accounts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL UNIQUE,
-                    source TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	                );
-
-                -- Channel tables
-                CREATE TABLE IF NOT EXISTS channels (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    channel_id TEXT NOT NULL UNIQUE,
-                    channel_type TEXT NOT NULL, -- 'discord', 'twitter', 'telegram' etc
-                    name TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE INDEX IF NOT EXISTS idx_channel_id_type ON channels(channel_id, channel_type);
-
-                -- Channel membership table
-                CREATE TABLE IF NOT EXISTS channel_members (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    channel_id INTEGER NOT NULL,
-                    account_id INTEGER NOT NULL,
-                    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (channel_id) REFERENCES channels(id),
-                    FOREIGN KEY (account_id) REFERENCES accounts(id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_channel_members ON channel_members(channel_id, account_id);
-
-                -- Messages table
-                CREATE TABLE IF NOT EXISTS messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    channel_id INTEGER NOT NULL,
-                    account_id INTEGER NOT NULL,
-                    content TEXT NOT NULL,
-					role TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (channel_id) REFERENCES channels(id),
-                    FOREIGN KEY (account_id) REFERENCES accounts(id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id);
-                CREATE INDEX IF NOT EXISTS idx_messages_account ON messages(account_id);
+                CREATE INDEX IF NOT EXISTS idx_document_id ON documents(document_id);
+                CREATE VIRTUAL TABLE IF NOT EXISTS embeddings USING vec0(embedding float[{}]);
 
                 COMMIT;",
-            )
-            .map_err(|e| tokio_rusqlite::Error::from(e))
+                dims
+            ))
+            .map_err(tokio_rusqlite::Error::from)
         })
         .await
         .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
 
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            _phantom: PhantomData,
+        })
     }
 
     fn serialize_embedding(embedding: &Embedding) -> Vec<f32> {
         embedding.vec.iter().map(|x| *x as f32).collect()
     }
 
-    pub async fn create_user(&self, name: String, source: String) -> Result<i64, SqliteError> {
-        self.conn
-            .call(move |conn| {
-                conn.query_row(
-                    "INSERT INTO accounts (name, source, created_at, updated_at)
-                 VALUES (?1, ?2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                 ON CONFLICT(name) DO UPDATE SET 
-                     updated_at = CURRENT_TIMESTAMP
-                 RETURNING id",
-                    rusqlite::params![name, source],
-                    |row| row.get(0),
-                )
-                .map_err(|e| tokio_rusqlite::Error::from(e))
-            })
-            .await
-            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
-    }
-    pub async fn get_user_by_source(&self, source: String) -> Result<Option<Account>, SqliteError> {
-        self.conn
-            .call(move |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT id, name, source, created_at, updated_at FROM accounts WHERE source = ?1"
-                )?;
-
-                let account = stmt.query_row(rusqlite::params![source], |row| {
-                    Ok(Account {
-                        id: row.get(0)?,
-                        name: row.get(1)?,
-                        source: row.get(2)?,
-                        created_at: row.get::<_, String>(3)?.parse().unwrap(),
-                        updated_at: row.get::<_, String>(4)?.parse().unwrap(),
-                    })
-                }).optional()?;
-
-                Ok(account)
-            })
-            .await
-            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
-    }
-
-    pub async fn create_channel(
-        &self,
-        channel_id: String,
-        channel_type: String,
-        name: Option<String>,
-    ) -> Result<i64, SqliteError> {
-        self.conn
-            .call(move |conn| {
-                conn.query_row(
-                    "INSERT INTO channels (channel_id, channel_type, name, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                 ON CONFLICT(channel_id) DO UPDATE SET 
-                     name = COALESCE(?3, name),
-                     updated_at = CURRENT_TIMESTAMP
-                 RETURNING id",
-                    rusqlite::params![channel_id, channel_type, name],
-                    |row| row.get(0),
-                )
-                .map_err(|e| tokio_rusqlite::Error::from(e))
-            })
-            .await
-            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
-    }
-    pub async fn get_channel(&self, id: i64) -> Result<Option<Channel>, SqliteError> {
-        self.conn
-            .call(move |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT id, name, source, created_at, updated_at FROM channels WHERE id = ?1",
-                )?;
-
-                let channel = stmt
-                    .query_row(rusqlite::params![id], |row| {
-                        Ok(Channel {
-                            id: row.get(0)?,
-                            name: row.get(1)?,
-                            source: row.get(2)?,
-                            created_at: row.get::<_, String>(3)?.parse().unwrap(),
-                            updated_at: row.get::<_, String>(4)?.parse().unwrap(),
-                        })
-                    })
-                    .optional()?;
-
-                Ok(channel)
-            })
-            .await
-            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
-    }
-
-    pub async fn get_channels_by_source(
-        &self,
-        source: String,
-    ) -> Result<Vec<Channel>, SqliteError> {
-        self.conn
-            .call(move |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT id, name, source, created_at, updated_at FROM channels WHERE source = ?1"
-                )?;
-
-                let channels = stmt.query_map(rusqlite::params![source], |row| {
-                    Ok(Channel {
-                        id: row.get(0)?,
-                        name: row.get(1)?,
-                        source: row.get(2)?,
-                        created_at: row.get::<_, String>(3)?.parse().unwrap(),
-                        updated_at: row.get::<_, String>(4)?.parse().unwrap(),
-                    })
-                }).and_then(|mapped_rows| {
-                    mapped_rows.collect::<Result<Vec<Channel>, _>>()
-                })?;
-
-                Ok(channels)
-            })
-            .await
-            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
-    }
-
-    pub async fn create_conversation(
-        &self,
-        user_id: i64,
-        title: String,
-    ) -> Result<i64, SqliteError> {
-        self.conn
-            .call(move |conn| {
-                let tx = conn.transaction()?;
-
-                let id = tx.query_row(
-                    "INSERT INTO conversations (user_id, title) VALUES (?1, ?2) RETURNING id",
-                    rusqlite::params![user_id, title],
-                    |row| row.get(0),
-                )?;
-
-                tx.commit()?;
-
-                Ok(id)
-            })
-            .await
-            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
-    }
-
-    pub async fn get_conversation(&self, id: i64) -> Result<Option<Conversation>, SqliteError> {
-        self.conn
-            .call(move |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT id, user_id, title, created_at, updated_at FROM conversations WHERE id = ?1"
-                )?;
-
-                let conversation = stmt.query_row(rusqlite::params![id], |row| {
-                    Ok(Conversation {
-                        id: row.get(0)?,
-                        user_id: row.get(1)?,
-                        title: row.get(2)?,
-                        created_at: row.get::<_, String>(3)?.parse().unwrap(),
-                        updated_at: row.get::<_, String>(4)?.parse().unwrap(),
-                    })
-                }).optional()?;
-
-                Ok(conversation)
-            })
-            .await
-            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
-    }
-
-    pub async fn get_conversations_by_user(
-        &self,
-        user_id: i64,
-    ) -> Result<Vec<Conversation>, SqliteError> {
-        self.conn
-            .call(move |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT id, user_id, title, created_at, updated_at FROM conversations WHERE user_id = ?1"
-                )?;
-
-                let conversations = stmt.query_map(rusqlite::params![user_id], |row| {
-                    Ok(Conversation {
-                        id: row.get(0)?,
-                        user_id: row.get(1)?,
-                        title: row.get(2)?,
-                        created_at: row.get::<_, String>(3)?.parse().unwrap(),
-                        updated_at: row.get::<_, String>(4)?.parse().unwrap(),
-                    })
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-
-                Ok(conversations)
-            })
-            .await
-            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
-    }
-
-    pub async fn create_message(
-        &self,
-        channel_id: i64,
-        account_id: i64,
-        role: String,
-        content: String,
-    ) -> Result<i64, SqliteError> {
-        self.conn
-            .call(move |conn| {
-                let tx = conn.transaction()?;
-
-                let id = tx.query_row(
-					"INSERT INTO messages (channel_id, account_id, content, role) VALUES (?1, ?2, ?3, ?4) RETURNING id",
-					rusqlite::params![channel_id, account_id, content, role],
-					|row| row.get(0)
-				)?;
-
-                tx.commit()?;
-
-                Ok(id)
-            })
-            .await
-            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
-    }
-
-    pub async fn get_message(&self, id: i64) -> Result<Option<Message>, SqliteError> {
-        self.conn
-			.call(move |conn| {
-				Ok(conn.prepare("SELECT id, channel_id, account_id, role, content, created_at FROM messages WHERE id = ?1")?
-					.query_row(rusqlite::params![id], |row| {
-						let created_at_str: String = row.get(5)?;
-						tracing::info!("created_at_str: {}", created_at_str);
-                    let created_at = chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%d %H:%M:%S")
-                        .map_err(|_| rusqlite::Error::InvalidQuery)?
-                        .and_utc();
-						Ok(Message {
-							id: row.get(0)?,
-							channel_id: row.get(1)?,
-							account_id: row.get(2)?,
-							role: row.get(3)?,
-							content: row.get(4)?,
-							created_at,
-						})
-					}).optional().unwrap())
-			})
-			.await
-			.map_err(|e| SqliteError::DatabaseError(Box::new(e)))
-    }
-
-    pub async fn get_recent_messages(
-        &self,
-        channel_id: i64,
-        limit: usize,
-    ) -> Result<Vec<Message>, SqliteError> {
-        self.conn
-            .call(move |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT id, channel_id, account_id, role, content, created_at 
-                     FROM messages 
-                     WHERE channel_id = ?1 
-                     ORDER BY created_at DESC 
-                     LIMIT ?2",
-                )?;
-
-                let messages = stmt
-                    .query_map(rusqlite::params![channel_id, limit], |row| {
-                        let created_at_str: String = row.get(5)?;
-                        let created_at = chrono::NaiveDateTime::parse_from_str(
-                            &created_at_str,
-                            "%Y-%m-%d %H:%M:%S",
-                        )
-                        .map_err(|_| rusqlite::Error::InvalidQuery)?
-                        .and_utc();
-
-                        Ok(Message {
-                            id: row.get(0)?,
-                            channel_id: row.get(1)?,
-                            account_id: row.get(2)?,
-                            role: row.get(3)?,
-                            content: row.get(4)?,
-                            created_at,
-                        })
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?;
-
-                Ok(messages)
-            })
-            .await
-            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
-    }
-
-    pub async fn get_messages_by_channel(
-        &self,
-        channel_id: i64,
-    ) -> Result<Vec<Message>, SqliteError> {
-        self.conn
-            .call(move |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT id, channel_id, account_id, role, content, created_at FROM messages WHERE channel_id = ?1 ORDER BY created_at ASC"
-                )?;
-
-                let messages = stmt.query_map(rusqlite::params![channel_id], |row| {
-                    Ok(Message {
-                        id: row.get(0)?,
-                        channel_id: row.get(1)?,
-                        account_id: row.get(2)?,
-                        role: row.get(3)?,
-                        content: row.get(4)?,
-                        created_at: row.get::<_, String>(5)?.parse().unwrap(),
-                    })
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-
-                Ok(messages)
-            })
-            .await
-            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    /// Create a new `SqliteVectorIndex` from an existing `SqliteVectorStore`.
+    pub async fn index(&self, model: E) -> Result<SqliteVectorIndex<E>, VectorStoreError> {
+        Ok(SqliteVectorIndex::new(model, self.clone()))
     }
 }
 
-impl VectorStore for SqliteStore {
+impl<E: EmbeddingModel> VectorStore for SqliteVectorStore<E> {
     type Q = String;
 
     async fn add_documents(
@@ -461,25 +70,23 @@ impl VectorStore for SqliteStore {
         info!("Adding {} documents to store", documents.len());
         self.conn
             .call(|conn| {
-                let tx = conn
-                    .transaction()
-                    .map_err(|e| tokio_rusqlite::Error::from(e))?;
+                let tx = conn.transaction().map_err(tokio_rusqlite::Error::from)?;
 
                 for doc in documents {
                     debug!("Storing document with id {}", doc.id);
                     // Store document and get auto-incremented ID
                     tx.execute(
-                        "INSERT OR REPLACE INTO documents (doc_id, document) VALUES (?1, ?2)",
-                        &[&doc.id, &doc.document.to_string()],
+                        "INSERT OR REPLACE INTO documents (document_id, document) VALUES (?1, ?2)",
+                        [&doc.id, &doc.document.to_string()],
                     )
-                    .map_err(|e| tokio_rusqlite::Error::from(e))?;
+                    .map_err(tokio_rusqlite::Error::from)?;
 
-                    let doc_id = tx.last_insert_rowid();
+                    let document_id = tx.last_insert_rowid();
 
                     // Store embeddings
                     let mut stmt = tx
                         .prepare("INSERT INTO embeddings (rowid, embedding) VALUES (?1, ?2)")
-                        .map_err(|e| tokio_rusqlite::Error::from(e))?;
+                        .map_err(tokio_rusqlite::Error::from)?;
 
                     debug!(
                         "Storing {} embeddings for document {}",
@@ -488,13 +95,13 @@ impl VectorStore for SqliteStore {
                     );
                     for embedding in doc.embeddings {
                         let vec = Self::serialize_embedding(&embedding);
-                        let blob = rusqlite::types::Value::Blob(vec.as_slice().as_bytes().to_vec());
-                        stmt.execute(rusqlite::params![doc_id, blob])
-                            .map_err(|e| tokio_rusqlite::Error::from(e))?;
+                        let blob = rusqlite::types::Value::Blob(vec.as_bytes().to_vec());
+                        stmt.execute(rusqlite::params![document_id, blob])
+                            .map_err(tokio_rusqlite::Error::from)?;
                     }
                 }
 
-                tx.commit().map_err(|e| tokio_rusqlite::Error::from(e))?;
+                tx.commit().map_err(tokio_rusqlite::Error::from)?;
                 Ok(())
             })
             .await
@@ -513,12 +120,12 @@ impl VectorStore for SqliteStore {
             .conn
             .call(move |conn| {
                 conn.query_row(
-                    "SELECT document FROM documents WHERE doc_id = ?1",
+                    "SELECT document FROM documents WHERE document_id = ?1",
                     rusqlite::params![id_clone],
                     |row| row.get::<_, String>(0),
                 )
                 .optional()
-                .map_err(|e| tokio_rusqlite::Error::from(e))
+                .map_err(tokio_rusqlite::Error::from)
             })
             .await
             .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
@@ -541,43 +148,59 @@ impl VectorStore for SqliteStore {
         id: &str,
     ) -> Result<Option<DocumentEmbeddings>, VectorStoreError> {
         debug!("Fetching embeddings for document {}", id);
-        // First get the document
-        let doc: Option<serde_json::Value> = self.get_document(&id).await?;
+        let id_clone = id.to_string();
+        let result = self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT e.embedding, d.document 
+                     FROM embeddings e
+                     JOIN documents d ON e.rowid = d.id
+                     WHERE d.document_id = ?1",
+                )?;
 
-        if let Some(doc) = doc {
-            let id_clone = id.to_string();
-            let embeddings = self
-                .conn
-                .call(move |conn| {
-                    let mut stmt = conn.prepare(
-                        "SELECT e.embedding 
-                         FROM embeddings e
-                         JOIN documents d ON e.rowid = d.id
-                         WHERE d.doc_id = ?1",
-                    )?;
-
-                    let embeddings = stmt
-                        .query_map(rusqlite::params![id_clone], |row| {
-                            let bytes: Vec<u8> = row.get(0)?;
-                            let vec = bytes
-                                .chunks(4)
-                                .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()) as f64)
-                                .collect();
-                            Ok(rig::embeddings::Embedding {
+                let result = stmt
+                    .query_map(rusqlite::params![id_clone], |row| {
+                        let bytes: Vec<u8> = row.get(0)?;
+                        let doc_str: String = row.get(1)?;
+                        let doc: serde_json::Value =
+                            serde_json::from_str(&doc_str).map_err(|e| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    0,
+                                    rusqlite::types::Type::Text,
+                                    Box::new(e),
+                                )
+                            })?;
+                        let vec = bytes
+                            .chunks(4)
+                            .map(|chunk| {
+                                f32::from_le_bytes(
+                                    chunk
+                                        .try_into()
+                                        .expect("Invalid chunk length - must be 4 bytes"),
+                                ) as f64
+                            })
+                            .collect();
+                        Ok((
+                            rig::embeddings::Embedding {
                                 vec,
                                 document: "".to_string(),
-                            })
-                        })?
-                        .collect::<Result<Vec<_>, _>>()?;
-                    Ok(embeddings)
-                })
-                .await
-                .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
+                            },
+                            doc,
+                        ))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(result)
+            })
+            .await
+            .map_err(|e| VectorStoreError::DatastoreError(Box::new(e)))?;
 
+        if let Some((_, doc)) = result.first() {
+            let embeddings: Vec<Embedding> = result.iter().map(|(e, _)| e.clone()).collect();
             debug!("Found {} embeddings for document {}", embeddings.len(), id);
             Ok(Some(DocumentEmbeddings {
                 id: id.to_string(),
-                document: doc,
+                document: doc.clone(),
                 embeddings,
             }))
         } else {
@@ -595,7 +218,7 @@ impl VectorStore for SqliteStore {
             .conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT d.doc_id, e.distance 
+                    "SELECT d.document_id, e.distance 
                      FROM embeddings e
                      JOIN documents d ON e.rowid = d.id
                      WHERE e.embedding MATCH ?1  AND k = ?2
@@ -626,12 +249,12 @@ impl VectorStore for SqliteStore {
 }
 
 pub struct SqliteVectorIndex<E: EmbeddingModel> {
-    store: SqliteStore,
+    store: SqliteVectorStore<E>,
     embedding_model: E,
 }
 
 impl<E: EmbeddingModel> SqliteVectorIndex<E> {
-    pub fn new(embedding_model: E, store: SqliteStore) -> Self {
+    pub fn new(embedding_model: E, store: SqliteVectorStore<E>) -> Self {
         Self {
             store,
             embedding_model,
@@ -647,14 +270,14 @@ impl<E: EmbeddingModel + std::marker::Sync> VectorStoreIndex for SqliteVectorInd
     ) -> Result<Vec<(f64, String, T)>, VectorStoreError> {
         debug!("Finding top {} matches for query", n);
         let embedding = self.embedding_model.embed_document(query).await?;
-        let query_vec = SqliteStore::serialize_embedding(&embedding);
+        let query_vec = SqliteVectorStore::<E>::serialize_embedding(&embedding);
 
         let rows = self
             .store
             .conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT d.doc_id, e.distance 
+                    "SELECT d.document_id, d.document, e.distance 
                     FROM embeddings e
                     JOIN documents d ON e.rowid = d.id
                     WHERE e.embedding MATCH ?1 AND k = ?2
@@ -662,8 +285,12 @@ impl<E: EmbeddingModel + std::marker::Sync> VectorStoreIndex for SqliteVectorInd
                 )?;
 
                 let rows = stmt
-                    .query_map(rusqlite::params![query_vec.as_bytes(), n], |row| {
-                        Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+                    .query_map(rusqlite::params![query_vec.as_bytes().to_vec(), n], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, f64>(2)?,
+                        ))
                     })?
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(rows)
@@ -673,9 +300,15 @@ impl<E: EmbeddingModel + std::marker::Sync> VectorStoreIndex for SqliteVectorInd
 
         debug!("Found {} potential matches", rows.len());
         let mut top_n = Vec::new();
-        for (id, distance) in rows {
-            if let Some(doc) = self.store.get_document(&id).await? {
-                top_n.push((distance, id, doc));
+        for (id, doc_str, distance) in rows {
+            match serde_json::from_str::<T>(&doc_str) {
+                Ok(doc) => {
+                    top_n.push((distance, id, doc));
+                }
+                Err(e) => {
+                    debug!("Failed to deserialize document {}: {}", id, e);
+                    continue;
+                }
             }
         }
 
@@ -690,24 +323,31 @@ impl<E: EmbeddingModel + std::marker::Sync> VectorStoreIndex for SqliteVectorInd
     ) -> Result<Vec<(f64, String)>, VectorStoreError> {
         debug!("Finding top {} document IDs for query", n);
         let embedding = self.embedding_model.embed_document(query).await?;
-        let query_vec = SqliteStore::serialize_embedding(&embedding);
+        let query_vec = SqliteVectorStore::<E>::serialize_embedding(&embedding);
 
         let results = self
             .store
             .conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT d.doc_id, e.distance 
+                    "SELECT d.document_id, e.distance 
                      FROM embeddings e
                      JOIN documents d ON e.rowid = d.id
-                     WHERE e.embedding MATCH ?1  AND k = ?2
+                     WHERE e.embedding MATCH ?1 AND k = ?2
                      ORDER BY e.distance",
                 )?;
 
                 let results = stmt
-                    .query_map(rusqlite::params![query_vec.as_bytes(), n], |row| {
-                        Ok((row.get::<_, f64>(1)?, row.get::<_, String>(0)?))
-                    })?
+                    .query_map(
+                        rusqlite::params![
+                            query_vec
+                                .iter()
+                                .flat_map(|x| x.to_le_bytes())
+                                .collect::<Vec<u8>>(),
+                            n
+                        ],
+                        |row| Ok((row.get::<_, f64>(1)?, row.get::<_, String>(0)?)),
+                    )?
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(results)
             })

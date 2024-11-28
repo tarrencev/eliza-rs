@@ -25,7 +25,6 @@ serenity = { version = "0.12", features = [
     "model",
     "cache",
 ] }
-sqlite-vec = "0.1"
 thiserror = "2.0.3"
 tokio = { version = "1.36", features = ["full"] }
 tokio-rusqlite = { git = "https://github.com/programatik29/tokio-rusqlite", features = [
@@ -36,3 +35,4 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2.4"
 zerocopy = "0.8.10"
+twitter-v2 = "0.1.8"

@@ -46,7 +46,7 @@ struct QuoteResponse {
 }
 
 impl Tool for Swap {
-    const NAME: &'static str = "swa[";
+    const NAME: &'static str = "swap";
 
     type Error = SwapError;
     type Args = SwapArgs;
