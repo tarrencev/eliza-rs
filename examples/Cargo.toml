@@ -15,6 +15,7 @@ sqlite-vec = "0.1"
 tokio-rusqlite = { git = "https://github.com/programatik29/tokio-rusqlite", features = [
     "bundled",
 ] }
+chrono = "0.4"
 
 [[example]]
 name = "main"
