@@ -10,11 +10,7 @@ use serenity::prelude::*;
 use std::collections::HashSet;
 use tracing::{debug, error, info};
 
-use crate::{
-    agent::Agent,
-    attention::AttentionCommand,
-    knowledge::{MessageMetadata, MessageSource},
-};
+use crate::{agent::Agent, attention::AttentionCommand};
 use crate::{
     attention::{Attention, AttentionContext},
     knowledge,
@@ -60,7 +56,12 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> EventHandler
 
         let knowledge = self.agent.knowledge();
         let knowledge_msg = knowledge::Message {
-            source: MessageSource::Discord(msg.clone()),
+            id: msg.id.to_string(),
+            sounce_id: msg.author.id.to_string(),
+            channel_id: msg.channel_id.to_string(),
+            account_id: msg.author.id.to_string(),
+            role: "user".to_string(),
+            created_at: *msg.timestamp,
             content: msg.content.clone(),
         };
 
@@ -99,8 +100,8 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> EventHandler
             message_content: msg.content.clone(),
             mentioned_names,
             history,
-            channel_type: knowledge_msg.source.channel_type(),
-            source: knowledge_msg.source.source(),
+            channel_type: knowledge_msg.channel_type,
+            source: knowledge_msg.source,
         };
 
         debug!(?context, "Attention context");
