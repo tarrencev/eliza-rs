@@ -1,4 +1,3 @@
-use chrono::DateTime;
 use rig::embeddings::{DocumentEmbeddings, Embedding, EmbeddingModel};
 use rig::vector_store::{VectorStore, VectorStoreError, VectorStoreIndex};
 use rusqlite::OptionalExtension;
