@@ -10,9 +10,11 @@ use serenity::prelude::*;
 use std::collections::HashSet;
 use tracing::{debug, error, info};
 
-use crate::attention::{Attention, AttentionContext};
-use crate::knowledge::{ChannelType, IntoKnowledgeMessage, Source};
 use crate::{agent::Agent, attention::AttentionCommand};
+use crate::{
+    attention::{Attention, AttentionContext},
+    knowledge,
+};
 
 const MIN_CHUNK_LENGTH: usize = 100;
 const MAX_MESSAGE_LENGTH: usize = 1500;
@@ -43,22 +45,6 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> DiscordClient<M,
     }
 }
 
-impl IntoKnowledgeMessage for serenity::model::channel::Message {
-    fn into_knowledge_parts(&self) -> (String, String, ChannelType, Source, String) {
-        (
-            self.id.to_string(),
-            self.channel_id.to_string(),
-            if self.guild_id.is_none() {
-                ChannelType::DirectMessage
-            } else {
-                ChannelType::Text
-            },
-            Source::Discord,
-            self.content.clone(),
-        )
-    }
-}
-
 #[async_trait]
 impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> EventHandler
     for DiscordClient<M, E>
@@ -69,8 +55,21 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> EventHandler
         }
 
         let knowledge = self.agent.knowledge();
+        let knowledge_msg = knowledge::Message {
+            id: msg.id.to_string(),
+            sounce_id: msg.author.id.to_string(),
+            channel_id: msg.channel_id.to_string(),
+            account_id: msg.author.id.to_string(),
+            role: "user".to_string(),
+            created_at: *msg.timestamp,
+            content: msg.content.clone(),
+        };
 
-        if let Err(err) = knowledge.create_message(&msg).await {
+        if let Err(err) = knowledge
+            .clone()
+            .create_message(knowledge_msg.clone())
+            .await
+        {
             error!(?err, "Failed to store message");
             return;
         }
@@ -97,14 +96,12 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> EventHandler
             "Mentioned names in message"
         );
 
-        let (_, _, channel_type, source, _) = msg.clone().into_knowledge_parts();
-
         let context = AttentionContext {
             message_content: msg.content.clone(),
             mentioned_names,
             history,
-            channel_type,
-            source,
+            channel_type: knowledge_msg.channel_type,
+            source: knowledge_msg.source,
         };
 
         debug!(?context, "Attention context");

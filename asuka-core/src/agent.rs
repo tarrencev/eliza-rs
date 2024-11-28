@@ -25,7 +25,7 @@ impl<M: CompletionModel, E: EmbeddingModel> Agent<M, E> {
         let builder = AgentBuilder::new(self.completion_model.clone())
             .preamble(&self.character.preamble)
             .context(&format!("Your name: {}", self.character.name))
-            .dynamic_context(1, self.knowledge.clone().index());
+            .dynamic_context(2, self.knowledge.clone().document_index());
 
         builder
     }

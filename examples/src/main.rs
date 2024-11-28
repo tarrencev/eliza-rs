@@ -1,4 +1,5 @@
 use asuka_core::attention::{Attention, AttentionConfig};
+use asuka_core::knowledge::Document;
 use clap::{command, Parser};
 use rig::providers::{self, openai};
 
@@ -75,7 +76,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_documents(
             repo.with_dir("src/pages/vrf")?
                 .read_with_path()
-                .ignore_errors(),
+                .ignore_errors()
+                .into_iter()
+                .map(|(path, content)| Document {
+                    id: path.to_string_lossy().to_string(),
+                    source_id: "github".to_string(),
+                    content,
+                    created_at: chrono::Utc::now(),
+                }),
         )
         .await?;
 
