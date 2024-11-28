@@ -1,16 +1,20 @@
-use std::path::PathBuf;
-use tokio_rusqlite::{Connection, OptionalExtension};
+use rusqlite::OptionalExtension;
+use serde::Deserialize;
+use tokio_rusqlite::Connection;
 use tracing::{debug, info};
 
 use rig::{
     embeddings::{EmbeddingModel, EmbeddingsBuilder},
-    vector_store::{VectorStore, VectorStoreError},
+    vector_store::VectorStoreError,
+    Embed,
 };
 
-use crate::stores::sqlite::{SqliteError, SqliteVectorIndex, SqliteVectorStore};
+use crate::stores::sqlite::{
+    Column, ColumnValue, SqliteError, SqliteVectorIndex, SqliteVectorStore, SqliteVectorStoreTable,
+};
 
 // Define enums at module level
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub enum Source {
     Discord,
     Telegram,
@@ -42,7 +46,7 @@ impl Source {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub enum ChannelType {
     DirectMessage,
     Text,
@@ -71,25 +75,192 @@ impl ChannelType {
     }
 }
 
-pub trait IntoKnowledgeMessage {
-    fn into_knowledge_parts(&self) -> (String, String, ChannelType, Source, String);
+// Core traits for messages
+pub trait MessageMetadata {
+    fn id(&self) -> String;
+    fn source_id(&self) -> String;
+    fn channel_id(&self) -> String;
+    fn created_at(&self) -> chrono::DateTime<chrono::Utc>;
+    fn source(&self) -> Source;
+    fn channel_type(&self) -> ChannelType;
+}
+
+pub trait MessageContent {
+    fn content(&self) -> &str;
+}
+
+#[derive(Embed, Clone, Debug)]
+pub struct Document {
+    pub id: String,
+    pub source_id: String,
+    #[embed]
+    pub content: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl SqliteVectorStoreTable for Document {
+    fn name() -> &'static str {
+        "documents"
+    }
+
+    fn schema() -> Vec<Column> {
+        vec![
+            Column::new("id", "TEXT PRIMARY KEY"),
+            Column::new("source_id", "TEXT").indexed(),
+            Column::new("content", "TEXT"),
+            Column::new("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+        ]
+    }
+
+    fn id(&self) -> String {
+        self.id.clone()
+    }
+
+    fn column_values(&self) -> Vec<(&'static str, Box<dyn ColumnValue>)> {
+        vec![
+            ("id", Box::new(self.id.clone())),
+            ("source_id", Box::new(self.source_id.clone())),
+            ("content", Box::new(self.content.clone())),
+            ("created_at", Box::new(self.created_at.to_rfc3339())),
+        ]
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Account {
+    pub id: i64,
+    pub name: String,
+    pub source: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Conversation {
+    pub id: String,
+    pub user_id: String,
+    pub title: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Embed, Clone, Debug, Deserialize)]
+pub struct Message {
+    pub id: String,
+    pub source: Source,
+    pub source_id: String,
+    pub channel_type: ChannelType,
+    pub channel_id: String,
+    pub account_id: String,
+    pub role: String,
+    #[embed]
+    pub content: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl SqliteVectorStoreTable for Message {
+    fn name() -> &'static str {
+        "messages"
+    }
+
+    fn schema() -> Vec<Column> {
+        vec![
+            Column::new("id", "TEXT PRIMARY KEY"),
+            Column::new("source", "TEXT"),
+            Column::new("source_id", "TEXT").indexed(),
+            Column::new("channel_type", "TEXT"),
+            Column::new("channel_id", "TEXT").indexed(),
+            Column::new("account_id", "TEXT").indexed(),
+            Column::new("role", "TEXT"),
+            Column::new("content", "TEXT"),
+            Column::new("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+        ]
+    }
+
+    fn id(&self) -> String {
+        self.id.clone()
+    }
+
+    fn column_values(&self) -> Vec<(&'static str, Box<dyn ColumnValue>)> {
+        vec![
+            ("id", Box::new(self.id.clone())),
+            ("source", Box::new(self.source.as_str().to_string())),
+            ("source_id", Box::new(self.source_id.clone())),
+            (
+                "channel_type",
+                Box::new(self.channel_type.as_str().to_string()),
+            ),
+            ("channel_id", Box::new(self.channel_id.clone())),
+            ("account_id", Box::new(self.account_id.clone())),
+            ("role", Box::new(self.role.clone())),
+            ("content", Box::new(self.content.clone())),
+            ("created_at", Box::new(self.created_at.to_rfc3339())),
+        ]
+    }
 }
 
 #[derive(Debug)]
-pub enum Message {
-    Discord(serenity::model::channel::Message),
+struct ConversionError(String);
+
+impl std::fmt::Display for ConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ConversionError {}
+
+impl TryFrom<&rusqlite::Row<'_>> for Message {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        Ok(Message {
+            id: row.get(0)?,
+            source: Source::from_str(&row.get::<_, String>(1)?).ok_or(
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    rusqlite::types::Type::Text,
+                    Box::new(ConversionError("Invalid source".to_string())),
+                ),
+            )?,
+            source_id: row.get(2)?,
+            channel_type: ChannelType::from_str(&row.get::<_, String>(3)?).ok_or(
+                rusqlite::Error::FromSqlConversionFailure(
+                    3,
+                    rusqlite::types::Type::Text,
+                    Box::new(ConversionError("Invalid channel type".to_string())),
+                ),
+            )?,
+            channel_id: row.get(4)?,
+            account_id: row.get(5)?,
+            role: row.get(6)?,
+            content: row.get(7)?,
+            created_at: row.get(8)?,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Channel {
+    pub id: String,
+    pub name: String,
+    pub source: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Clone)]
-pub struct KnowledgeBase<E: EmbeddingModel> {
+pub struct KnowledgeBase<E: EmbeddingModel + 'static> {
     conn: Connection,
-    store: SqliteVectorStore<E>,
+    document_store: SqliteVectorStore<E, Document>,
+    message_store: SqliteVectorStore<E, Message>,
     embedding_model: E,
 }
 
 impl<E: EmbeddingModel> KnowledgeBase<E> {
     pub async fn new(conn: Connection, embedding_model: E) -> Result<Self, VectorStoreError> {
-        let store = SqliteVectorStore::new(conn.clone(), &embedding_model).await?;
+        let document_store = SqliteVectorStore::new(conn.clone(), &embedding_model).await?;
+        let message_store = SqliteVectorStore::new(conn.clone(), &embedding_model).await?;
 
         conn.call(|conn| {
             conn.execute_batch(
@@ -118,18 +289,6 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
                 );
                 CREATE INDEX IF NOT EXISTS idx_channel_id_type ON channels(channel_id, channel_type);
 
-                -- Messages table
-                CREATE TABLE IF NOT EXISTS messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_id TEXT NOT NULL,
-                    account_id INTEGER NOT NULL,
-                    channel_id TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id);
-                CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source_id);
-
                 COMMIT;"
             )
             .map_err(tokio_rusqlite::Error::from)
@@ -139,7 +298,8 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
 
         Ok(Self {
             conn,
-            store,
+            document_store,
+            message_store,
             embedding_model,
         })
     }
@@ -262,13 +422,13 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
             .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
     }
 
-    pub async fn create_message<T: IntoKnowledgeMessage>(&self, msg: &T) -> anyhow::Result<i64> {
-        let (source_id, channel_id, channel_type, source, content) = msg.into_knowledge_parts();
-        let content = content.to_string();
-        let source_id = source_id.to_string();
-        let channel_id = channel_id.to_string();
-        let source_str = source.as_str();
-        let channel_type_str = channel_type.as_str();
+    pub async fn create_message(&self, msg: Message) -> anyhow::Result<i64> {
+        let embeddings = EmbeddingsBuilder::new(self.embedding_model.clone())
+            .documents(vec![msg.clone()])?
+            .build()
+            .await?;
+
+        let store = self.message_store.clone();
 
         self.conn
             .call(move |conn| {
@@ -276,23 +436,18 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
 
                 // First upsert the channel
                 tx.execute(
-                    "INSERT INTO channels (channel_id, channel_type, source) 
-                     VALUES (?1, ?2, ?3)
+                    "INSERT INTO channels (channel_id, channel_type, source, name, created_at, updated_at) 
+                     VALUES (?1, ?2, ?3, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                      ON CONFLICT (channel_id) DO UPDATE SET 
                      updated_at = CURRENT_TIMESTAMP",
-                    [&channel_id, channel_type_str, source_str],
+                    [
+                        &msg.channel_id,
+                        &msg.channel_type.as_str().to_string(), 
+                        &msg.source.as_str().to_string(),
+                    ],
                 )?;
 
-                // Then create the message
-                let id = {
-                    let mut stmt = tx.prepare(
-                        "INSERT INTO messages (source_id, channel_id, content) 
-                         VALUES (?1, ?2, ?3) 
-                         RETURNING id",
-                    )?;
-
-                    stmt.query_row([&source_id, &channel_id, &content], |row| row.get(0))?
-                };
+                let id = store.add_rows_with_txn(&tx, embeddings)?;
 
                 tx.commit()?;
 
@@ -302,24 +457,12 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    pub async fn get_message(&self, id: i64) -> Result<Option<DatabaseMessage>, SqliteError> {
+    pub async fn get_message(&self, id: i64) -> Result<Option<Message>, SqliteError> {
         self.conn
             .call(move |conn| {
-                Ok(conn.prepare("SELECT id, channel_id, account_id, role, content, created_at FROM messages WHERE id = ?1")?
+                Ok(conn.prepare("SELECT id, source, source_id, channel_type, channel_id, account_id, role, content, created_at FROM messages WHERE id = ?1")?
                     .query_row(rusqlite::params![id], |row| {
-                        let created_at_str: String = row.get(5)?;
-                        tracing::info!("created_at_str: {}", created_at_str);
-                    let created_at = chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%d %H:%M:%S")
-                        .map_err(|_| rusqlite::Error::InvalidQuery)?
-                        .and_utc();
-                        Ok(DatabaseMessage{
-                            id: row.get(0)?,
-                            channel_id: row.get(1)?,
-                            account_id: row.get(2)?,
-                            role: row.get(3)?,
-                            content: row.get(4)?,
-                            created_at,
-                        })
+                        Message::try_from(row)
                     }).optional().unwrap())
             })
             .await
@@ -330,11 +473,11 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
         &self,
         channel_id: i64,
         limit: usize,
-    ) -> Result<Vec<DatabaseMessage>, SqliteError> {
+    ) -> Result<Vec<Message>, SqliteError> {
         self.conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, channel_id, account_id, role, content, created_at 
+                    "SELECT id, source, source_id, channel_type, channel_id, account_id, role, content, created_at 
                      FROM messages 
                      WHERE channel_id = ?1 
                      ORDER BY created_at DESC 
@@ -343,22 +486,7 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
 
                 let messages = stmt
                     .query_map(rusqlite::params![channel_id, limit], |row| {
-                        let created_at_str: String = row.get(5)?;
-                        let created_at = chrono::NaiveDateTime::parse_from_str(
-                            &created_at_str,
-                            "%Y-%m-%d %H:%M:%S",
-                        )
-                        .map_err(|_| rusqlite::Error::InvalidQuery)?
-                        .and_utc();
-
-                        Ok(DatabaseMessage {
-                            id: row.get(0)?,
-                            channel_id: row.get(1)?,
-                            account_id: row.get(2)?,
-                            role: row.get(3)?,
-                            content: row.get(4)?,
-                            created_at,
-                        })
+                        Message::try_from(row)
                     })?
                     .collect::<Result<Vec<_>, _>>()?;
 
@@ -397,65 +525,26 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
 
     pub async fn add_documents<'a, I>(&mut self, documents: I) -> anyhow::Result<()>
     where
-        I: IntoIterator<Item = (PathBuf, String)>,
+        I: IntoIterator<Item = Document>,
     {
         info!("Adding documents to KnowledgeBase");
-        let mut builder = EmbeddingsBuilder::new(self.embedding_model.clone());
-
-        for (id, content) in documents {
-            let id_str = id.to_str().unwrap();
-            debug!(document_id = id_str, "Adding document");
-            builder = builder.simple_document(id_str, &content);
-        }
-
-        debug!("Building embeddings");
-        let embeddings = builder.build().await?;
+        let embeddings = EmbeddingsBuilder::new(self.embedding_model.clone())
+            .documents(documents)?
+            .build()
+            .await?;
 
         debug!("Adding embeddings to store");
-        self.store.add_documents(embeddings).await?;
+        self.document_store.add_rows(embeddings).await?;
 
         info!("Successfully added documents to KnowledgeBase");
         Ok(())
     }
 
-    pub fn index(self) -> SqliteVectorIndex<E> {
-        SqliteVectorIndex::new(self.embedding_model, self.store)
+    pub fn document_index(self) -> SqliteVectorIndex<E, Document> {
+        SqliteVectorIndex::new(self.embedding_model, self.document_store)
     }
-}
 
-#[derive(Debug, serde::Deserialize)]
-pub struct Account {
-    pub id: i64,
-    pub name: String,
-    pub source: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct Conversation {
-    pub id: i64,
-    pub user_id: i64,
-    pub title: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct DatabaseMessage {
-    pub id: i64,
-    pub channel_id: i64,
-    pub account_id: i64,
-    pub role: String,
-    pub content: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct Channel {
-    pub id: i64,
-    pub name: String,
-    pub source: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub fn message_index(self) -> SqliteVectorIndex<E, Message> {
+        SqliteVectorIndex::new(self.embedding_model, self.message_store)
+    }
 }

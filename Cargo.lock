@@ -270,6 +270,7 @@ version = "0.1.0"
 dependencies = [
  "asuka-core",
  "asuka-starknet",
+ "chrono",
  "clap",
  "dotenv",
  "rig-core",
@@ -2133,6 +2134,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "indoc"
+version = "2.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b248f5224d1d606005e02c97f5aa4e88eeb230488bcc03bc9ca4d7991399f2b5"
+
+[[package]]
 name = "inout"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3315,17 +3322,29 @@ dependencies = [
 [[package]]
 name = "rig-core"
 version = "0.4.1"
-source = "git+https://github.com/0xPlaygrounds/rig?branch=feat/agentic-chains#6f29e012698d5ded9b2d7ec9d0c92cf7e988e8f9"
+source = "git+https://github.com/tarrencev/rig#d4e40782f468c880c82330c09690be507bb0314e"
 dependencies = [
  "futures",
  "glob",
  "ordered-float",
  "reqwest 0.11.27",
+ "rig-derive",
  "schemars",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
  "tracing",
+]
+
+[[package]]
+name = "rig-derive"
+version = "0.1.0"
+source = "git+https://github.com/tarrencev/rig#d4e40782f468c880c82330c09690be507bb0314e"
+dependencies = [
+ "indoc",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.89",
 ]
 
 [[package]]
@@ -3360,6 +3379,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7753b721174eb8ff87a9a0e799e2d7bc3749323e773db92e0984debb00019d6e"
 dependencies = [
  "bitflags 2.6.0",
+ "chrono",
  "fallible-iterator",
  "fallible-streaming-iterator",
  "hashlink",
