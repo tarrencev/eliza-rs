@@ -3322,7 +3322,7 @@ dependencies = [
 [[package]]
 name = "rig-core"
 version = "0.4.1"
-source = "git+https://github.com/tarrencev/rig#d4e40782f468c880c82330c09690be507bb0314e"
+source = "git+https://github.com/0xPlaygrounds/rig?branch=feat/agentic-chains#c2c1996c20cd77747609007738842ef8d24eb18e"
 dependencies = [
  "futures",
  "glob",
@@ -3339,7 +3339,7 @@ dependencies = [
 [[package]]
 name = "rig-derive"
 version = "0.1.0"
-source = "git+https://github.com/tarrencev/rig#d4e40782f468c880c82330c09690be507bb0314e"
+source = "git+https://github.com/0xPlaygrounds/rig?branch=feat/agentic-chains#c2c1996c20cd77747609007738842ef8d24eb18e"
 dependencies = [
  "indoc",
  "proc-macro2",

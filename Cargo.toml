@@ -3,7 +3,9 @@ members = ["asuka-core", "asuka-starknet", "examples"]
 resolver = "2"
 
 [workspace.dependencies]
-rig-core = { git = "https://github.com/tarrencev/rig", features = ["derive"] }
+rig-core = { git = "https://github.com/0xPlaygrounds/rig", branch = "feat/agentic-chains", features = [
+    "derive",
+] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0.3"
