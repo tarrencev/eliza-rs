@@ -10,11 +10,7 @@ use serenity::prelude::*;
 use std::collections::HashSet;
 use tracing::{debug, error, info};
 
-use crate::{
-    agent::Agent,
-    attention::AttentionCommand,
-    knowledge::{MessageMetadata, MessageSource},
-};
+use crate::{agent::Agent, attention::AttentionCommand};
 use crate::{
     attention::{Attention, AttentionContext},
     knowledge,
@@ -49,6 +45,26 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> DiscordClient<M,
     }
 }
 
+impl From<Message> for knowledge::Message {
+    fn from(msg: Message) -> Self {
+        Self {
+            id: msg.id.to_string(),
+            source: knowledge::Source::Discord,
+            source_id: msg.author.id.to_string(),
+            channel_type: if msg.guild_id.is_none() {
+                knowledge::ChannelType::DirectMessage
+            } else {
+                knowledge::ChannelType::Text
+            },
+            channel_id: msg.channel_id.to_string(),
+            account_id: msg.author.id.to_string(),
+            role: "user".to_string(),
+            content: msg.content.clone(),
+            created_at: *msg.timestamp,
+        }
+    }
+}
+
 #[async_trait]
 impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> EventHandler
     for DiscordClient<M, E>
@@ -59,10 +75,7 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> EventHandler
         }
 
         let knowledge = self.agent.knowledge();
-        let knowledge_msg = knowledge::Message {
-            source: MessageSource::Discord(msg.clone()),
-            content: msg.content.clone(),
-        };
+        let knowledge_msg = knowledge::Message::from(msg.clone());
 
         if let Err(err) = knowledge
             .clone()
@@ -99,8 +112,8 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> EventHandler
             message_content: msg.content.clone(),
             mentioned_names,
             history,
-            channel_type: knowledge_msg.source.channel_type(),
-            source: knowledge_msg.source.source(),
+            channel_type: knowledge_msg.channel_type,
+            source: knowledge_msg.source,
         };
 
         debug!(?context, "Attention context");

@@ -11,22 +11,40 @@ use zerocopy::IntoBytes;
 pub enum SqliteError {
     DatabaseError(Box<dyn std::error::Error + Send + Sync>),
     SerializationError(Box<dyn std::error::Error + Send + Sync>),
+    InvalidColumnType(String),
+}
+
+pub trait ColumnValue: Send + Sync {
+    fn to_sql_string(&self) -> String;
+    fn column_type(&self) -> &'static str;
+}
+
+pub struct Column {
+    name: &'static str,
+    col_type: &'static str,
+    indexed: bool,
+}
+
+impl Column {
+    pub fn new(name: &'static str, col_type: &'static str) -> Self {
+        Self {
+            name,
+            col_type,
+            indexed: false,
+        }
+    }
+
+    pub fn indexed(mut self) -> Self {
+        self.indexed = true;
+        self
+    }
 }
 
 pub trait SqliteVectorStoreTable: Send + Sync + Clone {
-    /// Name of the table to store this document type
     fn name() -> &'static str;
-
-    /// Additional columns to add to the table schema beyond the default ones
-    /// Returns Vec of (column_name, column_type, should_index)
-    fn columns() -> Vec<(&'static str, &'static str, bool)>;
-
-    /// Get the document ID
+    fn schema() -> Vec<Column>;
     fn id(&self) -> String;
-
-    /// Get values for additional columns defined in SqliteVectorStoreTable
-    /// Returns Vec of (column_name, value)
-    fn column_values(&self) -> Vec<(&'static str, String)>;
+    fn column_values(&self) -> Vec<(&'static str, Box<dyn ColumnValue>)>;
 }
 
 #[derive(Clone)]
@@ -39,22 +57,21 @@ impl<E: EmbeddingModel + 'static, T: SqliteVectorStoreTable + 'static> SqliteVec
     pub async fn new(conn: Connection, embedding_model: &E) -> Result<Self, VectorStoreError> {
         let dims = embedding_model.ndims();
         let table_name = T::name();
-        let additional_columns = T::columns();
+        let schema = T::schema();
 
         // Build the table schema
         let mut create_table = format!("CREATE TABLE IF NOT EXISTS {} (", table_name);
 
-        // Add additional columns
+        // Add columns
         let mut first = true;
-        for (col_name, col_type, _) in &additional_columns {
+        for column in &schema {
             if !first {
                 create_table.push_str(",");
             }
-            create_table.push_str(&format!("\n    {} {}", col_name, col_type));
+            create_table.push_str(&format!("\n    {} {}", column.name, column.col_type));
             first = false;
         }
 
-        // Close parenthesis
         create_table.push_str("\n)");
 
         // Build index creation statements
@@ -64,11 +81,11 @@ impl<E: EmbeddingModel + 'static, T: SqliteVectorStoreTable + 'static> SqliteVec
         )];
 
         // Add indexes for marked columns
-        for (col_name, _, should_index) in additional_columns {
-            if should_index {
+        for column in schema {
+            if column.indexed {
                 create_indexes.push(format!(
                     "CREATE INDEX IF NOT EXISTS idx_{}_{} ON {}({})",
-                    table_name, col_name, table_name, col_name
+                    table_name, column.name, table_name, column.name
                 ));
             }
         }
@@ -118,9 +135,7 @@ impl<E: EmbeddingModel + 'static, T: SqliteVectorStoreTable + 'static> SqliteVec
         for (doc, embeddings) in &documents {
             debug!("Storing document with id {}", doc.id());
 
-            let mut values = vec![("id", doc.id())];
-            values.extend(doc.column_values());
-
+            let values = doc.column_values();
             let columns = values.iter().map(|(col, _)| *col).collect::<Vec<_>>();
             let placeholders = (1..=values.len())
                 .map(|i| format!("?{}", i))
@@ -133,7 +148,7 @@ impl<E: EmbeddingModel + 'static, T: SqliteVectorStoreTable + 'static> SqliteVec
                     columns.join(", "),
                     placeholders.join(", ")
                 ),
-                rusqlite::params_from_iter(values.iter().map(|(_, val)| val)),
+                rusqlite::params_from_iter(values.iter().map(|(_, val)| val.to_sql_string())),
             )?;
             last_id = txn.last_insert_rowid();
 
@@ -203,8 +218,8 @@ impl<E: EmbeddingModel + std::marker::Sync, T: SqliteVectorStoreTable> VectorSto
         let table_name = T::name();
 
         // Get all column names from SqliteVectorStoreTable
-        let columns = T::columns();
-        let column_names: Vec<&str> = columns.iter().map(|(name, _, _)| *name).collect();
+        let columns = T::schema();
+        let column_names: Vec<&str> = columns.iter().map(|column| column.name).collect();
 
         let rows = self
             .store
@@ -305,4 +320,14 @@ impl<E: EmbeddingModel + std::marker::Sync, T: SqliteVectorStoreTable> VectorSto
 
 fn serialize_embedding(embedding: &Embedding) -> Vec<f32> {
     embedding.vec.iter().map(|x| *x as f32).collect()
+}
+
+impl ColumnValue for String {
+    fn to_sql_string(&self) -> String {
+        self.clone()
+    }
+
+    fn column_type(&self) -> &'static str {
+        "TEXT"
+    }
 }

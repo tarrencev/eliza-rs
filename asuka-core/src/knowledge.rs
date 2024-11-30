@@ -1,3 +1,5 @@
+use rusqlite::OptionalExtension;
+use serde::Deserialize;
 use tokio_rusqlite::Connection;
 use tracing::{debug, info};
 
@@ -7,10 +9,12 @@ use rig::{
     Embed,
 };
 
-use crate::stores::sqlite::{SqliteVectorIndex, SqliteVectorStore, SqliteVectorStoreTable};
+use crate::stores::sqlite::{
+    Column, ColumnValue, SqliteError, SqliteVectorIndex, SqliteVectorStore, SqliteVectorStoreTable,
+};
 
 // Define enums at module level
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub enum Source {
     Discord,
     Telegram,
@@ -42,7 +46,7 @@ impl Source {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub enum ChannelType {
     DirectMessage,
     Text,
@@ -99,12 +103,12 @@ impl SqliteVectorStoreTable for Document {
         "documents"
     }
 
-    fn columns() -> Vec<(&'static str, &'static str, bool)> {
+    fn schema() -> Vec<Column> {
         vec![
-            ("id", "TEXT PRIMARY KEY", false),
-            ("source_id", "TEXT", true),
-            ("content", "TEXT", false),
-            ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP", false),
+            Column::new("id", "TEXT PRIMARY KEY"),
+            Column::new("source_id", "TEXT").indexed(),
+            Column::new("content", "TEXT"),
+            Column::new("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
         ]
     }
 
@@ -112,79 +116,46 @@ impl SqliteVectorStoreTable for Document {
         self.id.clone()
     }
 
-    fn column_values(&self) -> Vec<(&'static str, String)> {
+    fn column_values(&self) -> Vec<(&'static str, Box<dyn ColumnValue>)> {
         vec![
-            ("id", self.id.clone()),
-            ("source_id", self.source_id.clone()),
-            ("content", self.content.clone()),
-            ("created_at", self.created_at.to_rfc3339()),
+            ("id", Box::new(self.id.clone())),
+            ("source_id", Box::new(self.source_id.clone())),
+            ("content", Box::new(self.content.clone())),
+            ("created_at", Box::new(self.created_at.to_rfc3339())),
         ]
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum MessageSource {
-    Discord(serenity::model::channel::Message),
-    // Add other platform messages here
+#[derive(Debug, Deserialize)]
+pub struct Account {
+    pub id: i64,
+    pub name: String,
+    pub source: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl MessageMetadata for MessageSource {
-    fn id(&self) -> String {
-        match self {
-            MessageSource::Discord(msg) => msg.id.to_string(),
-        }
-    }
-
-    fn source_id(&self) -> String {
-        match self {
-            MessageSource::Discord(msg) => msg.author.id.to_string(),
-        }
-    }
-
-    fn channel_id(&self) -> String {
-        match self {
-            MessageSource::Discord(msg) => msg.channel_id.to_string(),
-        }
-    }
-
-    fn created_at(&self) -> chrono::DateTime<chrono::Utc> {
-        match self {
-            MessageSource::Discord(msg) => *msg.timestamp,
-        }
-    }
-
-    fn source(&self) -> Source {
-        match self {
-            MessageSource::Discord(_) => Source::Discord,
-        }
-    }
-
-    fn channel_type(&self) -> ChannelType {
-        match self {
-            MessageSource::Discord(msg) => {
-                if msg.guild_id.is_none() {
-                    ChannelType::DirectMessage
-                } else {
-                    ChannelType::Text
-                }
-            }
-        }
-    }
+#[derive(Debug, Deserialize)]
+pub struct Conversation {
+    pub id: String,
+    pub user_id: String,
+    pub title: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl MessageContent for MessageSource {
-    fn content(&self) -> &str {
-        match self {
-            MessageSource::Discord(msg) => &msg.content,
-        }
-    }
-}
-
-#[derive(Embed, Clone, Debug)]
+#[derive(Embed, Clone, Debug, Deserialize)]
 pub struct Message {
-    pub source: MessageSource,
+    pub id: String,
+    pub source: Source,
+    pub source_id: String,
+    pub channel_type: ChannelType,
+    pub channel_id: String,
+    pub account_id: String,
+    pub role: String,
     #[embed]
     pub content: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl SqliteVectorStoreTable for Message {
@@ -192,29 +163,90 @@ impl SqliteVectorStoreTable for Message {
         "messages"
     }
 
-    fn columns() -> Vec<(&'static str, &'static str, bool)> {
+    fn schema() -> Vec<Column> {
         vec![
-            ("id", "TEXT PRIMARY KEY", false),
-            ("source_id", "TEXT", true),
-            ("channel_id", "TEXT", true),
-            ("content", "TEXT", false),
-            ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP", false),
+            Column::new("id", "TEXT PRIMARY KEY"),
+            Column::new("source", "TEXT"),
+            Column::new("source_id", "TEXT").indexed(),
+            Column::new("channel_type", "TEXT"),
+            Column::new("channel_id", "TEXT").indexed(),
+            Column::new("account_id", "TEXT").indexed(),
+            Column::new("role", "TEXT"),
+            Column::new("content", "TEXT"),
+            Column::new("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
         ]
     }
 
     fn id(&self) -> String {
-        self.source.id()
+        self.id.clone()
     }
 
-    fn column_values(&self) -> Vec<(&'static str, String)> {
+    fn column_values(&self) -> Vec<(&'static str, Box<dyn ColumnValue>)> {
         vec![
-            ("id", self.source.id()),
-            ("source_id", self.source.source_id()),
-            ("channel_id", self.source.channel_id()),
-            ("content", self.content.clone()),
-            ("created_at", self.source.created_at().to_rfc3339()),
+            ("id", Box::new(self.id.clone())),
+            ("source", Box::new(self.source.as_str().to_string())),
+            ("source_id", Box::new(self.source_id.clone())),
+            (
+                "channel_type",
+                Box::new(self.channel_type.as_str().to_string()),
+            ),
+            ("channel_id", Box::new(self.channel_id.clone())),
+            ("account_id", Box::new(self.account_id.clone())),
+            ("role", Box::new(self.role.clone())),
+            ("content", Box::new(self.content.clone())),
+            ("created_at", Box::new(self.created_at.to_rfc3339())),
         ]
     }
+}
+
+#[derive(Debug)]
+struct ConversionError(String);
+
+impl std::fmt::Display for ConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ConversionError {}
+
+impl TryFrom<&rusqlite::Row<'_>> for Message {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        Ok(Message {
+            id: row.get(0)?,
+            source: Source::from_str(&row.get::<_, String>(1)?).ok_or(
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    rusqlite::types::Type::Text,
+                    Box::new(ConversionError("Invalid source".to_string())),
+                ),
+            )?,
+            source_id: row.get(2)?,
+            channel_type: ChannelType::from_str(&row.get::<_, String>(3)?).ok_or(
+                rusqlite::Error::FromSqlConversionFailure(
+                    3,
+                    rusqlite::types::Type::Text,
+                    Box::new(ConversionError("Invalid channel type".to_string())),
+                ),
+            )?,
+            channel_id: row.get(4)?,
+            account_id: row.get(5)?,
+            role: row.get(6)?,
+            content: row.get(7)?,
+            created_at: row.get(8)?,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Channel {
+    pub id: String,
+    pub name: String,
+    pub source: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Clone)]
@@ -237,7 +269,8 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
                 -- User management tables
                 CREATE TABLE IF NOT EXISTS accounts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    source_id TEXT NOT NULL UNIQUE,
                     source TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -247,7 +280,7 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
                 -- Channel tables
                 CREATE TABLE IF NOT EXISTS channels (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    channel_id TEXT UNIQUE NOT NULL,
+                    channel_id TEXT NOT NULL UNIQUE,
                     channel_type TEXT NOT NULL,
                     source TEXT NOT NULL,
                     name TEXT,
@@ -271,6 +304,124 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
         })
     }
 
+    pub async fn create_user(&self, name: String, source: String) -> Result<i64, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                conn.query_row(
+                    "INSERT INTO accounts (name, source, created_at, updated_at)
+                 VALUES (?1, ?2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                 ON CONFLICT(name) DO UPDATE SET 
+                     updated_at = CURRENT_TIMESTAMP
+                 RETURNING id",
+                    rusqlite::params![name, source],
+                    |row| row.get(0),
+                )
+                .map_err(tokio_rusqlite::Error::from)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    }
+
+    pub async fn get_user_by_source(&self, source: String) -> Result<Option<Account>, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, name, source, created_at, updated_at FROM accounts WHERE source = ?1"
+                )?;
+
+                let account = stmt.query_row(rusqlite::params![source], |row| {
+                    Ok(Account {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        source: row.get(2)?,
+                        created_at: row.get::<_, String>(3)?.parse().unwrap(),
+                        updated_at: row.get::<_, String>(4)?.parse().unwrap(),
+                    })
+                }).optional()?;
+
+                Ok(account)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    }
+
+    pub async fn create_channel(
+        &self,
+        channel_id: String,
+        channel_type: String,
+        name: Option<String>,
+    ) -> Result<i64, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                conn.query_row(
+                    "INSERT INTO channels (channel_id, channel_type, name, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                 ON CONFLICT(channel_id) DO UPDATE SET 
+                     name = COALESCE(?3, name),
+                     updated_at = CURRENT_TIMESTAMP
+                 RETURNING id",
+                    rusqlite::params![channel_id, channel_type, name],
+                    |row| row.get(0),
+                )
+                .map_err(tokio_rusqlite::Error::from)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    }
+
+    pub async fn get_channel(&self, id: i64) -> Result<Option<Channel>, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, name, source, created_at, updated_at FROM channels WHERE id = ?1",
+                )?;
+
+                let channel = stmt
+                    .query_row(rusqlite::params![id], |row| {
+                        Ok(Channel {
+                            id: row.get(0)?,
+                            name: row.get(1)?,
+                            source: row.get(2)?,
+                            created_at: row.get::<_, String>(3)?.parse().unwrap(),
+                            updated_at: row.get::<_, String>(4)?.parse().unwrap(),
+                        })
+                    })
+                    .optional()?;
+
+                Ok(channel)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    }
+
+    pub async fn get_channels_by_source(
+        &self,
+        source: String,
+    ) -> Result<Vec<Channel>, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, name, source, created_at, updated_at FROM channels WHERE source = ?1"
+                )?;
+
+                let channels = stmt.query_map(rusqlite::params![source], |row| {
+                    Ok(Channel {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        source: row.get(2)?,
+                        created_at: row.get::<_, String>(3)?.parse().unwrap(),
+                        updated_at: row.get::<_, String>(4)?.parse().unwrap(),
+                    })
+                }).and_then(|mapped_rows| {
+                    mapped_rows.collect::<Result<Vec<Channel>, _>>()
+                })?;
+
+                Ok(channels)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    }
+
     pub async fn create_message(&self, msg: Message) -> anyhow::Result<i64> {
         let embeddings = EmbeddingsBuilder::new(self.embedding_model.clone())
             .documents(vec![msg.clone()])?
@@ -285,14 +436,14 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
 
                 // First upsert the channel
                 tx.execute(
-                    "INSERT INTO channels (channel_id, channel_type, source) 
-                     VALUES (?1, ?2, ?3)
+                    "INSERT INTO channels (channel_id, channel_type, source, name, created_at, updated_at) 
+                     VALUES (?1, ?2, ?3, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                      ON CONFLICT (channel_id) DO UPDATE SET 
                      updated_at = CURRENT_TIMESTAMP",
                     [
-                        &msg.source.channel_id(),
-                        msg.source.channel_type().as_str(),
-                        msg.source.source().as_str(),
+                        &msg.channel_id,
+                        &msg.channel_type.as_str().to_string(), 
+                        &msg.source.as_str().to_string(),
                     ],
                 )?;
 
@@ -304,6 +455,45 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
             })
             .await
             .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    pub async fn get_message(&self, id: i64) -> Result<Option<Message>, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                Ok(conn.prepare("SELECT id, source, source_id, channel_type, channel_id, account_id, role, content, created_at FROM messages WHERE id = ?1")?
+                    .query_row(rusqlite::params![id], |row| {
+                        Message::try_from(row)
+                    }).optional().unwrap())
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    }
+
+    pub async fn get_recent_messages(
+        &self,
+        channel_id: i64,
+        limit: usize,
+    ) -> Result<Vec<Message>, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, source, source_id, channel_type, channel_id, account_id, role, content, created_at 
+                     FROM messages 
+                     WHERE channel_id = ?1 
+                     ORDER BY created_at DESC 
+                     LIMIT ?2",
+                )?;
+
+                let messages = stmt
+                    .query_map(rusqlite::params![channel_id, limit], |row| {
+                        Message::try_from(row)
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                Ok(messages)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
     }
 
     pub async fn channel_messages(
