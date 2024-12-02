@@ -1,9 +1,13 @@
-use crate::agent::Agent;
-use crate::attention::{Attention, AttentionCommand, AttentionContext};
-use crate::knowledge::{ChannelType, IntoKnowledgeMessage, Source};
+use crate::{
+    agent::Agent,
+    attention::{Attention, AttentionCommand, AttentionContext},
+    knowledge::{ChannelType, Message, Source},
+};
 
-use rig::completion::{CompletionModel, Prompt};
-use rig::embeddings::EmbeddingModel;
+use rig::{
+    completion::{CompletionModel, Prompt},
+    embeddings::EmbeddingModel,
+};
 use std::collections::HashSet;
 use tracing::{debug, error, info};
 use twitter::{authorization::BearerToken, TwitterApi};
@@ -20,19 +24,27 @@ pub struct TwitterClient<M: CompletionModel, E: EmbeddingModel + 'static> {
     api: TwitterApi<BearerToken>,
 }
 
-// Implement IntoKnowledgeMessage for Twitter messages
-impl IntoKnowledgeMessage for twitter::Tweet {
-    fn into_knowledge_parts(&self) -> (String, String, ChannelType, Source, String) {
-        (
-            self.id.to_string(),
-            self.conversation_id
-                .clone()
-                .unwrap_or_else(|| self.id)
-                .to_string(),
-            ChannelType::Text,
-            Source::Twitter,
-            self.text.clone(),
-        )
+impl From<twitter::Tweet> for Message {
+    fn from(tweet: twitter::Tweet) -> Self {
+        let created_at = tweet
+            .created_at
+            .map(|t| chrono::DateTime::from_timestamp(t.unix_timestamp(), 0).unwrap_or_default())
+            .unwrap_or_default();
+
+        Self {
+            id: tweet.id.to_string(),
+            source: Source::Twitter,
+            source_id: tweet.id.to_string(),
+            channel_type: ChannelType::Text,
+            channel_id: tweet.conversation_id.unwrap_or(tweet.id).to_string(),
+            account_id: tweet
+                .author_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "0".to_string()),
+            role: "user".to_string(),
+            content: tweet.text.clone(),
+            created_at,
+        }
     }
 }
 
@@ -80,8 +92,9 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> TwitterClient<M,
         tweet: twitter::Tweet,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let knowledge = self.agent.knowledge();
+        let knowledge_msg = Message::from(tweet.clone());
 
-        if let Err(err) = knowledge.create_message(&tweet).await {
+        if let Err(err) = knowledge.create_message(knowledge_msg.clone()).await {
             error!(?err, "Failed to store tweet");
             return Ok(());
         }
@@ -95,7 +108,12 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> TwitterClient<M,
             .map(|mention| mention[1..].to_string())
             .collect();
 
-        let history: Vec<(String, String)> = thread
+        debug!(
+            mentioned_names = ?mentioned_names,
+            "Mentioned names in tweet"
+        );
+
+        let history = thread
             .iter()
             .map(|t| (t.id.to_string(), t.text.clone()))
             .collect();
@@ -104,8 +122,8 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> TwitterClient<M,
             message_content: tweet.text.clone(),
             mentioned_names,
             history,
-            channel_type: ChannelType::Text,
-            source: Source::Twitter,
+            channel_type: knowledge_msg.channel_type,
+            source: knowledge_msg.source,
         };
 
         debug!(?context, "Attention context");
