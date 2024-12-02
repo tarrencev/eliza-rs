@@ -40,6 +40,43 @@ impl Column {
     }
 }
 
+/// Example of a document type that can be used with SqliteVectorStore
+/// ```rust
+/// use rig::Embed;
+/// use serde::Deserialize;
+/// use rig_sqlite::{Column, ColumnValue, SqliteVectorStoreTable};
+///
+/// #[derive(Embed, Clone, Debug, Deserialize)]
+/// struct Document {
+///     id: String,
+///     #[embed]
+///     content: String,
+/// }
+///
+/// impl SqliteVectorStoreTable for Document {
+///     fn name() -> &'static str {
+///         "documents"
+///     }
+///
+///     fn schema() -> Vec<Column> {
+///         vec![
+///             Column::new("id", "TEXT PRIMARY KEY"),
+///             Column::new("content", "TEXT"),
+///         ]
+///     }
+///
+///     fn id(&self) -> String {
+///         self.id.clone()
+///     }
+///
+///     fn column_values(&self) -> Vec<(&'static str, Box<dyn ColumnValue>)> {
+///         vec![
+///             ("id", Box::new(self.id.clone())),
+///             ("content", Box::new(self.content.clone())),
+///         ]
+///     }
+/// }
+/// ```
 pub trait SqliteVectorStoreTable: Send + Sync + Clone {
     fn name() -> &'static str;
     fn schema() -> Vec<Column>;
@@ -66,7 +103,7 @@ impl<E: EmbeddingModel + 'static, T: SqliteVectorStoreTable + 'static> SqliteVec
         let mut first = true;
         for column in &schema {
             if !first {
-                create_table.push_str(",");
+                create_table.push(',');
             }
             create_table.push_str(&format!("\n    {} {}", column.name, column.col_type));
             first = false;
@@ -137,32 +174,38 @@ impl<E: EmbeddingModel + 'static, T: SqliteVectorStoreTable + 'static> SqliteVec
 
             let values = doc.column_values();
             let columns = values.iter().map(|(col, _)| *col).collect::<Vec<_>>();
+
             let placeholders = (1..=values.len())
                 .map(|i| format!("?{}", i))
                 .collect::<Vec<_>>();
 
+            let insert_sql = format!(
+                "INSERT OR REPLACE INTO {} ({}) VALUES ({})",
+                table_name,
+                columns.join(", "),
+                placeholders.join(", ")
+            );
+
             txn.execute(
-                &format!(
-                    "INSERT OR REPLACE INTO {} ({}) VALUES ({})",
-                    table_name,
-                    columns.join(", "),
-                    placeholders.join(", ")
-                ),
+                &insert_sql,
                 rusqlite::params_from_iter(values.iter().map(|(_, val)| val.to_sql_string())),
             )?;
             last_id = txn.last_insert_rowid();
 
-            let mut stmt = txn.prepare(&format!(
+            let embeddings_sql = format!(
                 "INSERT INTO {}_embeddings (rowid, embedding) VALUES (?1, ?2)",
                 table_name
-            ))?;
-            debug!(
-                "Storing {} embeddings for document {}",
-                embeddings.len(),
-                doc.id()
             );
-            for embedding in embeddings.iter() {
-                let vec = serialize_embedding(&embedding);
+
+            let mut stmt = txn.prepare(&embeddings_sql)?;
+            for (i, embedding) in embeddings.iter().enumerate() {
+                let vec = serialize_embedding(embedding);
+                debug!(
+                    "Storing embedding {} of {} (size: {} bytes)",
+                    i + 1,
+                    embeddings.len(),
+                    vec.len() * 4
+                );
                 let blob = rusqlite::types::Value::Blob(vec.as_bytes().to_vec());
                 stmt.execute(rusqlite::params![last_id, blob])?;
             }
@@ -190,6 +233,88 @@ impl<E: EmbeddingModel + 'static, T: SqliteVectorStoreTable + 'static> SqliteVec
     }
 }
 
+/// SQLite vector store implementation for Rig.
+///
+/// This crate provides a SQLite-based vector store implementation that can be used with Rig.
+/// It uses the `sqlite-vec` extension to enable vector similarity search capabilities.
+///
+/// # Example
+/// ```rust
+/// use rig::{
+///     embeddings::EmbeddingsBuilder,
+///     providers::openai::{Client, TEXT_EMBEDDING_ADA_002},
+///     vector_store::VectorStoreIndex,
+///     Embed,
+/// };
+/// use rig_sqlite::{Column, ColumnValue, SqliteVectorStore, SqliteVectorStoreTable};
+/// use serde::Deserialize;
+/// use tokio_rusqlite::Connection;
+///
+/// #[derive(Embed, Clone, Debug, Deserialize)]
+/// struct Document {
+///     id: String,
+///     #[embed]
+///     content: String,
+/// }
+///
+/// impl SqliteVectorStoreTable for Document {
+///     fn name() -> &'static str {
+///         "documents"
+///     }
+///
+///     fn schema() -> Vec<Column> {
+///         vec![
+///             Column::new("id", "TEXT PRIMARY KEY"),
+///             Column::new("content", "TEXT"),
+///         ]
+///     }
+///
+///     fn id(&self) -> String {
+///         self.id.clone()
+///     }
+///
+///     fn column_values(&self) -> Vec<(&'static str, Box<dyn ColumnValue>)> {
+///         vec![
+///             ("id", Box::new(self.id.clone())),
+///             ("content", Box::new(self.content.clone())),
+///         ]
+///     }
+/// }
+///
+/// let conn = Connection::open("vector_store.db").await?;
+/// let openai_client = Client::new("YOUR_API_KEY");
+/// let model = openai_client.embedding_model(TEXT_EMBEDDING_ADA_002);
+///
+/// // Initialize vector store
+/// let vector_store = SqliteVectorStore::new(conn, &model).await?;
+///
+/// // Create documents
+/// let documents = vec![
+///     Document {
+///         id: "doc1".to_string(),
+///         content: "Example document 1".to_string(),
+///     },
+///     Document {
+///         id: "doc2".to_string(),
+///         content: "Example document 2".to_string(),
+///     },
+/// ];
+///
+/// // Generate embeddings
+/// let embeddings = EmbeddingsBuilder::new(model.clone())
+///     .documents(documents)?
+///     .build()
+///     .await?;
+///
+/// // Add to vector store
+/// vector_store.add_rows(embeddings).await?;
+///
+/// // Create index and search
+/// let index = vector_store.index(model);
+/// let results = index
+///     .top_n::<Document>("Example query", 2)
+///     .await?;
+/// ```
 pub struct SqliteVectorIndex<E: EmbeddingModel + 'static, T: SqliteVectorStoreTable + 'static> {
     store: SqliteVectorStore<E, T>,
     embedding_model: E,
@@ -230,7 +355,7 @@ impl<E: EmbeddingModel + std::marker::Sync, T: SqliteVectorStoreTable> VectorSto
                 let mut stmt = conn.prepare(&format!(
                     "SELECT d.{}, e.distance 
                     FROM {}_embeddings e
-                    JOIN {} d ON e.rowid = d.id
+                    JOIN {} d ON e.rowid = d.rowid
                     WHERE e.embedding MATCH ?1 AND k = ?2
                     ORDER BY e.distance",
                     select_cols, table_name, table_name
@@ -290,7 +415,7 @@ impl<E: EmbeddingModel + std::marker::Sync, T: SqliteVectorStoreTable> VectorSto
                 let mut stmt = conn.prepare(&format!(
                     "SELECT d.id, e.distance 
                      FROM {0}_embeddings e
-                     JOIN {0} d ON e.rowid = d.id
+                     JOIN {0} d ON e.rowid = d.rowid
                      WHERE e.embedding MATCH ?1 AND k = ?2
                      ORDER BY e.distance",
                     table_name

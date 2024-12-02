@@ -281,7 +281,7 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
             .build()
             .await?;
 
-        debug!("Adding embeddings to store");
+        debug!("Adding embeddings to document store");
         self.document_store.add_rows(embeddings).await?;
 
         info!("Successfully added documents to KnowledgeBase");
