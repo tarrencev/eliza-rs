@@ -6,11 +6,11 @@ use tokio_rusqlite::Connection;
 use tracing::{debug, info};
 
 use super::models::{Account, Channel, Document, Message};
-use crate::stores::sqlite::{SqliteError, SqliteVectorIndex, SqliteVectorStore};
+use rig_sqlite::{SqliteError, SqliteVectorIndex, SqliteVectorStore};
 use rusqlite::OptionalExtension;
 
 #[derive(Clone)]
-pub struct KnowledgeBase<E: EmbeddingModel + 'static> {
+pub struct KnowledgeBase<E: EmbeddingModel + Clone + 'static> {
     conn: Connection,
     document_store: SqliteVectorStore<E, Document>,
     message_store: SqliteVectorStore<E, Message>,
