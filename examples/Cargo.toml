@@ -11,10 +11,9 @@ clap = { version = "4.0", features = ["derive", "env"] }
 dotenv = "0.15"
 toml = "0.8"
 rig-core.workspace = true
+rig-sqlite.workspace = true
 sqlite-vec = "0.1"
-tokio-rusqlite = { git = "https://github.com/programatik29/tokio-rusqlite", features = [
-    "bundled",
-] }
+tokio-rusqlite.workspace = true
 chrono = "0.4"
 
 [[example]]

@@ -10,18 +10,18 @@ use rig::{
 };
 use std::collections::HashSet;
 use tracing::{debug, error, info};
-use twitter::{authorization::BearerToken, TwitterApi};
-use twitter_v2 as twitter;
+use twitter::{authorization::Authorization, TwitterApi};
+use twitter_v2::{self as twitter, authorization::{BearerToken, Oauth1aToken}};
 use twitter_v2::data::ReferencedTweetKind;
 
 const MAX_TWEET_LENGTH: usize = 280;
 const MAX_HISTORY_TWEETS: i64 = 10;
 
 #[derive(Clone)]
-pub struct TwitterClient<M: CompletionModel, E: EmbeddingModel + 'static> {
+pub struct TwitterClient<M: CompletionModel, E: EmbeddingModel + 'static, A: Authorization> {
     agent: Agent<M, E>,
     attention: Attention<M>,
-    api: TwitterApi<BearerToken>,
+    api: TwitterApi<A>,
 }
 
 impl From<twitter::Tweet> for Message {
@@ -48,7 +48,20 @@ impl From<twitter::Tweet> for Message {
     }
 }
 
-impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> TwitterClient<M, E> {
+
+impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> TwitterClient<M, E, Oauth1aToken> {
+    pub fn new(agent: Agent<M, E>, attention: Attention<M>, oauth1a_token: Oauth1aToken) -> Self {
+        let api = TwitterApi::new(oauth1a_token);
+
+        Self {
+            agent,
+            attention,
+            api,
+        }
+    }
+}
+
+impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> TwitterClient<M, E, BearerToken> {
     pub fn new(agent: Agent<M, E>, attention: Attention<M>, bearer_token: &str) -> Self {
         let auth = BearerToken::new(bearer_token.to_string());
         let api = TwitterApi::new(auth);
@@ -59,7 +72,9 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> TwitterClient<M,
             api,
         }
     }
+}
 
+impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static, A: Authorization> TwitterClient<M, E, A> {
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
         info!("Starting Twitter bot");
         self.listen_for_mentions().await

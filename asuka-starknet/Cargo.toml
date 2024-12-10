@@ -12,7 +12,5 @@ serde_json = { workspace = true }
 slot = { git = "https://github.com/cartridge-gg/slot", rev = "1298a30" }
 starknet = "0.12.0"
 thiserror = { workspace = true }
-tokio-rusqlite = { git = "https://github.com/programatik29/tokio-rusqlite", features = [
-    "bundled",
-] }
+tokio-rusqlite.workspace = true
 url = "2.5"

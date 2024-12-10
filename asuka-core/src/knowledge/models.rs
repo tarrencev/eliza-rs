@@ -1,5 +1,5 @@
 use super::types::{ChannelType, Source};
-use crate::stores::sqlite::{Column, ColumnValue, SqliteVectorStoreTable};
+use rig_sqlite::{Column, ColumnValue, SqliteVectorStoreTable};
 use rig::Embed;
 use rusqlite::Row;
 
