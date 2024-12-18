@@ -253,8 +253,10 @@ dependencies = [
  "clap",
  "dotenv",
  "futures",
+ "futures-util",
  "git2",
  "idna",
+ "mcp-sdk",
  "octocrab",
  "rig-core",
  "rig-sqlite",
@@ -263,9 +265,10 @@ dependencies = [
  "serde_json",
  "serenity",
  "teloxide",
- "thiserror 2.0.4",
+ "thiserror 2.0.8",
  "tokio",
  "tokio-rusqlite",
+ "tokio-tungstenite 0.26.0",
  "toml",
  "tracing",
  "tracing-subscriber",
@@ -302,7 +305,7 @@ dependencies = [
  "serde_json",
  "slot",
  "starknet",
- "thiserror 2.0.4",
+ "thiserror 2.0.8",
  "tokio-rusqlite",
  "url",
 ]
@@ -2484,6 +2487,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 
 [[package]]
+name = "mcp-sdk"
+version = "0.0.2"
+source = "git+https://github.com/AntigmaLabs/mcp-sdk#34030904841c6b2d501baf4eef92364634903b3a"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3142,7 +3159,7 @@ dependencies = [
  "rustc-hash",
  "rustls 0.23.19",
  "socket2",
- "thiserror 2.0.4",
+ "thiserror 2.0.8",
  "tokio",
  "tracing",
 ]
@@ -3161,7 +3178,7 @@ dependencies = [
  "rustls 0.23.19",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.4",
+ "thiserror 2.0.8",
  "tinyvec",
  "tracing",
  "web-time",
@@ -4009,7 +4026,7 @@ dependencies = [
  "static_assertions",
  "time",
  "tokio",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.21.0",
  "tracing",
  "typemap_rev",
  "typesize",
@@ -4632,11 +4649,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.4"
+version = "2.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f49a1853cf82743e3b7950f77e0f4d622ca36cf4317cba00c767838bac8d490"
+checksum = "08f5383f3e0071702bf93ab5ee99b52d26936be9dedd9413067cbdcddcb6141a"
 dependencies = [
- "thiserror-impl 2.0.4",
+ "thiserror-impl 2.0.8",
 ]
 
 [[package]]
@@ -4652,9 +4669,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.4"
+version = "2.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8381894bb3efe0c4acac3ded651301ceee58a15d47c2e34885ed1908ad667061"
+checksum = "f2f357fcec90b3caef6623a099691be676d033b40a058ac95d2a6ade6fa0c943"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4841,8 +4858,20 @@ dependencies = [
  "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.25.0",
- "tungstenite",
+ "tungstenite 0.21.0",
  "webpki-roots 0.26.7",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c14b3e8ebea4eb2577de77903e6c008d9ac80b5aae1f9ae781c5229ae935a44"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite 0.26.0",
 ]
 
 [[package]]
@@ -5098,6 +5127,24 @@ dependencies = [
  "sha1",
  "thiserror 1.0.69",
  "url",
+ "utf-8",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4ab519cc9c1e57e6cab1087f262f9fc978a4e9d5f943b0e029567521d3525cb"
+dependencies = [
+ "byteorder",
+ "bytes",
+ "data-encoding",
+ "http 1.2.0",
+ "httparse",
+ "log",
+ "rand",
+ "sha1",
+ "thiserror 2.0.8",
  "utf-8",
 ]
 

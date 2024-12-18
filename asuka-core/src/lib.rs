@@ -19,3 +19,4 @@ pub mod character;
 pub mod clients;
 pub mod knowledge;
 pub mod loaders;
+pub mod mcp;
