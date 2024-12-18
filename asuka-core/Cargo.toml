@@ -35,5 +35,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2.4"
 zerocopy = "0.8.10"
 twitter-v2 = "0.1.8"
-teloxide = {version = "0.13.0", default-features = false, features = ["macros", "ctrlc_handler"] }
-eyre = {version = "0.6.12", all-features = false}
+teloxide = { version = "0.13.0", default-features = false, features = [
+    "macros",
+    "ctrlc_handler",
+] }

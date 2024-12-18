@@ -1,3 +1,4 @@
+use anyhow::Result;
 use rig::{
     completion::{CompletionModel, Prompt},
     embeddings::EmbeddingModel,
@@ -29,7 +30,7 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> TelegramClient<M
         Self { agent, attention }
     }
 
-    pub async fn start(&self, token: &str) -> eyre::Result<()> {
+    pub async fn start(&self, token: &str) -> Result<()> {
         let bot = teloxide::Bot::new(token);
 
         info!("Starting telegram bot");
@@ -66,7 +67,7 @@ impl From<teloxide::types::Message> for knowledge::Message {
 }
 
 impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> TelegramClient<M, E> {
-    async fn run(&self, bot: teloxide::Bot) -> eyre::Result<()> {
+    async fn run(&self, bot: teloxide::Bot) -> Result<()> {
         let knowledge = self.agent.knowledge().clone();
         let attention = self.attention.clone();
         let agent = self.agent.clone();
@@ -82,7 +83,7 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> TelegramClient<M
 
                     if let Err(err) = knowledge.create_message(knowledge_msg.clone()).await {
                         error!(?err, "Failed to store message");
-                        return Err(eyre::eyre!(err));
+                        return Err(anyhow::anyhow!(err));
                     }
 
                     debug!("Fetching message history for channel {}", msg.chat.id);
@@ -96,7 +97,7 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> TelegramClient<M
                         }
                         Err(err) => {
                             error!(?err, "Failed to fetch recent messages");
-                            return Err(eyre::eyre!(err));
+                            return Err(anyhow::anyhow!(err));
                         }
                     };
 
@@ -150,7 +151,7 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> TelegramClient<M
                         Ok(response) => response,
                         Err(err) => {
                             error!(?err, "Failed to generate response");
-                            return Err(eyre::eyre!(err));
+                            return Err(anyhow::anyhow!(err));
                         }
                     };
 
@@ -158,7 +159,7 @@ impl<M: CompletionModel + 'static, E: EmbeddingModel + 'static> TelegramClient<M
 
                     if let Err(why) = bot.send_message(msg.chat.id, response).await {
                         error!(?why, "Failed to send message");
-                        return Err(eyre::eyre!(why));
+                        return Err(anyhow::anyhow!(why));
                     }
 
                     Ok(())
