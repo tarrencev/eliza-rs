@@ -39,3 +39,6 @@ teloxide = { version = "0.13.0", default-features = false, features = [
     "macros",
     "ctrlc_handler",
 ] }
+mcp-sdk = { git = "https://github.com/AntigmaLabs/mcp-sdk" }
+tokio-tungstenite = "0.26.0"
+futures-util = "0.3.31"
