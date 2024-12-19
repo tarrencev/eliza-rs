@@ -11,7 +11,7 @@ use rusqlite::OptionalExtension;
 
 #[derive(Clone)]
 pub struct KnowledgeBase<E: EmbeddingModel + Clone + 'static> {
-    conn: Connection,
+    pub conn: Connection,
     document_store: SqliteVectorStore<E, Document>,
     message_store: SqliteVectorStore<E, Message>,
     embedding_model: E,
