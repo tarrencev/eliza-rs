@@ -267,7 +267,7 @@ dependencies = [
  "teloxide",
  "thiserror 2.0.8",
  "tokio",
- "tokio-rusqlite 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tokio-rusqlite",
  "tokio-tungstenite 0.26.0",
  "toml",
  "tracing",
@@ -290,7 +290,7 @@ dependencies = [
  "rig-sqlite",
  "sqlite-vec",
  "tokio",
- "tokio-rusqlite 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tokio-rusqlite",
  "toml",
 ]
 
@@ -306,7 +306,7 @@ dependencies = [
  "slot",
  "starknet",
  "thiserror 2.0.8",
- "tokio-rusqlite 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tokio-rusqlite",
  "url",
 ]
 
@@ -3466,7 +3466,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlite-vec",
- "tokio-rusqlite 0.6.0 (git+https://github.com/programatik29/tokio-rusqlite)",
+ "tokio-rusqlite",
  "tracing",
  "zerocopy 0.8.12",
 ]
@@ -4786,17 +4786,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
 dependencies = [
  "native-tls",
- "tokio",
-]
-
-[[package]]
-name = "tokio-rusqlite"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b65501378eb676f400c57991f42cbd0986827ab5c5200c53f206d710fb32a945"
-dependencies = [
- "crossbeam-channel",
- "rusqlite",
  "tokio",
 ]
 
