@@ -138,17 +138,18 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
         channel_id: String,
         channel_type: String,
         name: Option<String>,
+        source: String,
     ) -> Result<i64, SqliteError> {
         self.conn
             .call(move |conn| {
                 conn.query_row(
-                    "INSERT INTO channels (channel_id, channel_type, name, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    "INSERT INTO channels (channel_id, channel_type, source, name, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                  ON CONFLICT(channel_id) DO UPDATE SET 
-                     name = COALESCE(?3, name),
+                     name = COALESCE(?4, name),
                      updated_at = CURRENT_TIMESTAMP
                  RETURNING id",
-                    rusqlite::params![channel_id, channel_type, name],
+                    rusqlite::params![channel_id, channel_type, source, name],
                     |row| row.get(0),
                 )
                 .map_err(tokio_rusqlite::Error::from)
@@ -161,19 +162,11 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
         self.conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, name, source, created_at, updated_at FROM channels WHERE id = ?1",
+                    "SELECT id, channel_id, channel_type, source, name, created_at, updated_at FROM channels WHERE id = ?1",
                 )?;
 
                 let channel = stmt
-                    .query_row(rusqlite::params![id], |row| {
-                        Ok(Channel {
-                            id: row.get(0)?,
-                            name: row.get(1)?,
-                            source: row.get(2)?,
-                            created_at: row.get::<_, String>(3)?.parse().unwrap(),
-                            updated_at: row.get::<_, String>(4)?.parse().unwrap(),
-                        })
-                    })
+                    .query_row(rusqlite::params![id], |row| Channel::try_from(row))
                     .optional()?;
 
                 Ok(channel)
@@ -215,13 +208,7 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
                 )?;
 
                 let channels = stmt.query_map(rusqlite::params![source], |row| {
-                    Ok(Channel {
-                        id: row.get(0)?,
-                        name: row.get(1)?,
-                        source: row.get(2)?,
-                        created_at: row.get::<_, String>(3)?.parse().unwrap(),
-                        updated_at: row.get::<_, String>(4)?.parse().unwrap(),
-                    })
+                    Channel::try_from(row)
                 }).and_then(|mapped_rows| {
                     mapped_rows.collect::<Result<Vec<Channel>, _>>()
                 })?;

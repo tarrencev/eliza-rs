@@ -49,8 +49,10 @@ pub struct Message {
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct Channel {
     pub id: String,
-    pub name: String,
+    pub channel_id: String,
+    pub channel_type: String,
     pub source: String,
+    pub name: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -204,10 +206,12 @@ impl TryFrom<&Row<'_>> for Channel {
     fn try_from(row: &Row) -> Result<Self, Self::Error> {
         Ok(Channel {
             id: row.get(0)?,
-            name: row.get(1)?,
-            source: row.get(2)?,
-            created_at: row.get(3)?,
-            updated_at: row.get(4)?,
+            channel_id: row.get(1)?,
+            channel_type: row.get(2)?,
+            source: row.get(3)?,
+            name: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
         })
     }
 }
