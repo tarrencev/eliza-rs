@@ -49,6 +49,21 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
                 );
                 CREATE INDEX IF NOT EXISTS idx_channel_id_type ON channels(channel_id, channel_type);
 
+                -- Messages table
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY,
+                    channel_id INTEGER NOT NULL,
+                    account_id INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    reply_to_id INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (channel_id) REFERENCES channels(id),
+                    FOREIGN KEY (account_id) REFERENCES accounts(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id);
+                CREATE INDEX IF NOT EXISTS idx_messages_account ON messages(account_id);
+
                 COMMIT;"
             )
             .map_err(tokio_rusqlite::Error::from)
@@ -64,16 +79,21 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
         })
     }
 
-    pub async fn create_user(&self, name: String, source: String) -> Result<i64, SqliteError> {
+    pub async fn create_user(
+        &self,
+        name: String,
+        source: String,
+        source_id: String,
+    ) -> Result<i64, SqliteError> {
         self.conn
             .call(move |conn| {
                 conn.query_row(
-                    "INSERT INTO accounts (name, source, created_at, updated_at)
-                     VALUES (?1, ?2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                     ON CONFLICT(name) DO UPDATE SET 
-                         updated_at = CURRENT_TIMESTAMP
-                     RETURNING id",
-                    rusqlite::params![name, source],
+                    "INSERT INTO accounts (name, source, created_at, updated_at, source_id)
+                 VALUES (?1, ?2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?3)
+                 ON CONFLICT(name) DO UPDATE SET 
+                     updated_at = CURRENT_TIMESTAMP
+                 RETURNING id",
+                    rusqlite::params![name, source, source_id],
                     |row| row.get(0),
                 )
                 .map_err(tokio_rusqlite::Error::from)
@@ -94,11 +114,17 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
         self.conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, name, source, created_at, updated_at FROM accounts WHERE source = ?1"
+                    "SELECT source_id, name, source, created_at, updated_at FROM accounts WHERE source = ?1"
                 )?;
 
                 let account = stmt.query_row(rusqlite::params![source], |row| {
-                    Account::try_from(row)
+                    Ok(Account {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        source: row.get(2)?,
+                        created_at: row.get::<_, String>(3)?.parse().unwrap(),
+                        updated_at: row.get::<_, String>(4)?.parse().unwrap(),
+                    })
                 }).optional()?;
 
                 Ok(account)
@@ -117,11 +143,11 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
             .call(move |conn| {
                 conn.query_row(
                     "INSERT INTO channels (channel_id, channel_type, name, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                     ON CONFLICT(channel_id) DO UPDATE SET 
-                         name = COALESCE(?3, name),
-                         updated_at = CURRENT_TIMESTAMP
-                     RETURNING id",
+                 VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                 ON CONFLICT(channel_id) DO UPDATE SET 
+                     name = COALESCE(?3, name),
+                     updated_at = CURRENT_TIMESTAMP
+                 RETURNING id",
                     rusqlite::params![channel_id, channel_type, name],
                     |row| row.get(0),
                 )
@@ -139,7 +165,15 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
                 )?;
 
                 let channel = stmt
-                    .query_row(rusqlite::params![id], |row| Channel::try_from(row))
+                    .query_row(rusqlite::params![id], |row| {
+                        Ok(Channel {
+                            id: row.get(0)?,
+                            name: row.get(1)?,
+                            source: row.get(2)?,
+                            created_at: row.get::<_, String>(3)?.parse().unwrap(),
+                            updated_at: row.get::<_, String>(4)?.parse().unwrap(),
+                        })
+                    })
                     .optional()?;
 
                 Ok(channel)
@@ -159,7 +193,13 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
                 )?;
 
                 let channels = stmt.query_map(rusqlite::params![source], |row| {
-                    Channel::try_from(row)
+                    Ok(Channel {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        source: row.get(2)?,
+                        created_at: row.get::<_, String>(3)?.parse().unwrap(),
+                        updated_at: row.get::<_, String>(4)?.parse().unwrap(),
+                    })
                 }).and_then(|mapped_rows| {
                     mapped_rows.collect::<Result<Vec<Channel>, _>>()
                 })?;
@@ -184,14 +224,15 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
 
                 // First upsert the channel
                 tx.execute(
-                    "INSERT INTO channels (channel_id, channel_type, source, name, created_at, updated_at) 
-                     VALUES (?1, ?2, ?3, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                     ON CONFLICT (channel_id) DO UPDATE SET 
-                     updated_at = CURRENT_TIMESTAMP",
+                    "INSERT INTO channels (id, channel_id, account_id, content, role, created_at, updated_at) 
+                     VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                     ON CONFLICT (id) DO UPDATE SET",
                     [
+                        &msg.id,
                         &msg.channel_id,
-                        &msg.channel_type.as_str().to_string(),
-                        &msg.source.as_str().to_string(),
+                        &msg.account_id,
+                        &msg.content,
+                        &msg.role,
                     ],
                 )?;
 
@@ -234,6 +275,37 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
 
                 let messages = stmt
                     .query_map(rusqlite::params![channel_id, limit], |row| {
+                        Message::try_from(row)
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                Ok(messages)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    }
+
+    pub async fn get_conversation_between_users(
+        &self,
+        user_id: i64,
+        other_user_id: i64,
+        since: chrono::DateTime<chrono::Utc>,
+        limit: usize,
+    ) -> Result<Vec<Message>, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                let query =
+                    "SELECT m.id, m.channel_id, m.account_id, m.role, m.content, m.reply_to_id, m.created_at 
+                FROM messages m 
+                WHERE (m.account_id = ?1 OR (m.reply_to_id = ?1 AND m.account_id = ?2)) 
+                    AND m.created_at > ?3
+                ORDER BY m.created_at ASC
+                LIMIT ?4";
+
+            let mut stmt = conn.prepare(query)?;
+
+            let messages = stmt
+                    .query_map(rusqlite::params![user_id, other_user_id, since, limit], |row| {
                         Message::try_from(row)
                     })?
                     .collect::<Result<Vec<_>, _>>()?;

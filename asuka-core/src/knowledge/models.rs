@@ -1,6 +1,8 @@
+use std::str::FromStr;
+
 use super::types::{ChannelType, Source};
-use rig_sqlite::{Column, ColumnValue, SqliteVectorStoreTable};
 use rig::Embed;
+use rig_sqlite::{Column, ColumnValue, SqliteVectorStoreTable};
 use rusqlite::Row;
 
 #[derive(Embed, Clone, Debug)]
@@ -170,23 +172,23 @@ impl TryFrom<&Row<'_>> for Message {
     fn try_from(row: &Row) -> Result<Self, Self::Error> {
         Ok(Message {
             id: row.get(0)?,
-            source: Source::from_str(&row.get::<_, String>(1)?).ok_or(
+            source: Source::from_str(&row.get::<_, String>(1)?).map_err(|_| {
                 rusqlite::Error::FromSqlConversionFailure(
                     1,
                     rusqlite::types::Type::Text,
                     Box::new(super::error::ConversionError("Invalid source".to_string())),
-                ),
-            )?,
+                )
+            })?,
             source_id: row.get(2)?,
-            channel_type: ChannelType::from_str(&row.get::<_, String>(3)?).ok_or(
+            channel_type: ChannelType::from_str(&row.get::<_, String>(3)?).map_err(|_| {
                 rusqlite::Error::FromSqlConversionFailure(
                     3,
                     rusqlite::types::Type::Text,
                     Box::new(super::error::ConversionError(
                         "Invalid channel type".to_string(),
                     )),
-                ),
-            )?,
+                )
+            })?,
             channel_id: row.get(4)?,
             account_id: row.get(5)?,
             role: row.get(6)?,

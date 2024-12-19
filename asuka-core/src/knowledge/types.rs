@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub enum Source {
     Discord,
@@ -17,15 +19,19 @@ impl Source {
             Source::Twitter => "twitter",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for Source {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "discord" => Some(Source::Discord),
-            "telegram" => Some(Source::Telegram),
-            "github" => Some(Source::Github),
-            "x" => Some(Source::X),
-            "twitter" => Some(Source::Twitter),
-            _ => None,
+            "discord" => Ok(Source::Discord),
+            "telegram" => Ok(Source::Telegram),
+            "github" => Ok(Source::Github),
+            "x" => Ok(Source::X),
+            "twitter" => Ok(Source::Twitter),
+            _ => Err(()),
         }
     }
 }
@@ -47,14 +53,18 @@ impl ChannelType {
             ChannelType::Thread => "thread",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for ChannelType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "direct_message" => Some(ChannelType::DirectMessage),
-            "text" => Some(ChannelType::Text),
-            "voice" => Some(ChannelType::Voice),
-            "thread" => Some(ChannelType::Thread),
-            _ => None,
+            "direct_message" => Ok(ChannelType::DirectMessage),
+            "text" => Ok(ChannelType::Text),
+            "voice" => Ok(ChannelType::Voice),
+            "thread" => Ok(ChannelType::Thread),
+            _ => Err(()),
         }
     }
 }
@@ -70,4 +80,4 @@ pub trait MessageMetadata {
 
 pub trait MessageContent {
     fn content(&self) -> &str;
-} 
+}
