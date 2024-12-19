@@ -56,7 +56,6 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
                     account_id INTEGER NOT NULL,
                     content TEXT NOT NULL,
                     role TEXT NOT NULL,
-                    reply_to_id INTEGER,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (channel_id) REFERENCES channels(id),
                     FOREIGN KEY (account_id) REFERENCES accounts(id)
@@ -233,8 +232,8 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
 
                 // First upsert the channel
                 tx.execute(
-                    "INSERT INTO channels (id, channel_id, account_id, content, role, created_at, updated_at) 
-                     VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    "INSERT INTO messages (id, channel_id, account_id, content, role, created_at) 
+                     VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
                      ON CONFLICT (id) DO UPDATE SET",
                     [
                         &msg.id,
