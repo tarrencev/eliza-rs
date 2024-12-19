@@ -230,11 +230,15 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
             .call(move |conn| {
                 let tx = conn.transaction()?;
 
-                // First upsert the channel
                 tx.execute(
                     "INSERT INTO messages (id, channel_id, account_id, content, role, created_at) 
-                     VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
-                     ON CONFLICT (id) DO UPDATE SET",
+                 VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
+                 ON CONFLICT (id) DO UPDATE SET 
+                     channel_id = ?2, 
+                     account_id = ?3, 
+                     content = ?4, 
+                     role = ?5, 
+                     created_at = CURRENT_TIMESTAMP",
                     [
                         &msg.id,
                         &msg.channel_id,
