@@ -267,7 +267,7 @@ dependencies = [
  "teloxide",
  "thiserror 2.0.8",
  "tokio",
- "tokio-rusqlite",
+ "tokio-rusqlite 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio-tungstenite 0.26.0",
  "toml",
  "tracing",
@@ -290,7 +290,7 @@ dependencies = [
  "rig-sqlite",
  "sqlite-vec",
  "tokio",
- "tokio-rusqlite",
+ "tokio-rusqlite 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "toml",
 ]
 
@@ -306,7 +306,7 @@ dependencies = [
  "slot",
  "starknet",
  "thiserror 2.0.8",
- "tokio-rusqlite",
+ "tokio-rusqlite 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "url",
 ]
 
@@ -3430,8 +3430,7 @@ dependencies = [
 [[package]]
 name = "rig-core"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67d6a8a31988c7e0e151bb0868e6f8bf0d4a0d01ba57c46a84ad3f354c55cc18"
+source = "git+https://github.com/0xPlaygrounds/rig#da8b5d9c56cc45438a50ffb53ae456bc2fdd076f"
 dependencies = [
  "futures",
  "glob",
@@ -3448,8 +3447,7 @@ dependencies = [
 [[package]]
 name = "rig-derive"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e08c252975eff73b87872cfbf0077215413e402bbd98976c78cd3abdbd9995c7"
+source = "git+https://github.com/0xPlaygrounds/rig#da8b5d9c56cc45438a50ffb53ae456bc2fdd076f"
 dependencies = [
  "indoc",
  "proc-macro2",
@@ -3460,8 +3458,7 @@ dependencies = [
 [[package]]
 name = "rig-sqlite"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9013aefe77b4a1edd70a812697e1eb664186c30f6b8f073bb8f9c704adaa7a18"
+source = "git+https://github.com/0xPlaygrounds/rig#da8b5d9c56cc45438a50ffb53ae456bc2fdd076f"
 dependencies = [
  "chrono",
  "rig-core",
@@ -3469,7 +3466,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlite-vec",
- "tokio-rusqlite",
+ "tokio-rusqlite 0.6.0 (git+https://github.com/programatik29/tokio-rusqlite)",
  "tracing",
  "zerocopy 0.8.12",
 ]
@@ -4797,6 +4794,16 @@ name = "tokio-rusqlite"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b65501378eb676f400c57991f42cbd0986827ab5c5200c53f206d710fb32a945"
+dependencies = [
+ "crossbeam-channel",
+ "rusqlite",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-rusqlite"
+version = "0.6.0"
+source = "git+https://github.com/programatik29/tokio-rusqlite#168e9c47fd6c7c9f8032b660f62084e16ade7bac"
 dependencies = [
  "crossbeam-channel",
  "rusqlite",
