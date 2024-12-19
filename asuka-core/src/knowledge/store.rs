@@ -182,6 +182,28 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
             .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
     }
 
+    pub async fn get_channel_by_channel_id(
+        &self,
+        channel_id: &str,
+        source: &str,
+    ) -> Result<Option<Channel>, SqliteError> {
+        let channel_id = channel_id.to_string();
+        let source = source.to_string();
+
+        self.conn
+        .call(move |conn| {
+            let result = conn.prepare("SELECT id, name, source, created_at, updated_at FROM channels WHERE channel_id = ?1 AND source = ?2")?
+                .query_row(rusqlite::params![channel_id, source], |row| {
+                        Channel::try_from(row)
+                    })
+                    .optional()?;
+
+                Ok(result)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    }
+
     pub async fn get_channels_by_source(
         &self,
         source: String,
