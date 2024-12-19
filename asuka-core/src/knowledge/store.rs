@@ -90,7 +90,7 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
                 conn.query_row(
                     "INSERT INTO accounts (name, source, created_at, updated_at, source_id)
                  VALUES (?1, ?2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?3)
-                 ON CONFLICT(name) DO UPDATE SET 
+                 ON CONFLICT(source_id) DO UPDATE SET 
                      updated_at = CURRENT_TIMESTAMP
                  RETURNING id",
                     rusqlite::params![name, source, source_id],
