@@ -231,20 +231,22 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
                 let tx = conn.transaction()?;
 
                 tx.execute(
-                    "INSERT INTO messages (id, channel_id, account_id, content, role, created_at) 
-                 VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
+                    "INSERT INTO messages (id, channel_id, account_id, content, role, created_at, reply_to_source_id) 
+                 VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP, ?6)
                  ON CONFLICT (id) DO UPDATE SET 
                      channel_id = ?2, 
                      account_id = ?3, 
                      content = ?4, 
                      role = ?5, 
-                     created_at = CURRENT_TIMESTAMP",
+                     created_at = CURRENT_TIMESTAMP,
+                     reply_to_source_id = ?6",
                     [
                         &msg.id,
                         &msg.channel_id,
                         &msg.account_id,
                         &msg.content,
                         &msg.role,
+                        &msg.reply_to_source_id,
                     ],
                 )?;
 
@@ -297,36 +299,6 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
             .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
     }
 
-    pub async fn get_conversation_between_users(
-        &self,
-        user_id: i64,
-        other_user_id: i64,
-        since: chrono::DateTime<chrono::Utc>,
-        limit: usize,
-    ) -> Result<Vec<Message>, SqliteError> {
-        self.conn
-            .call(move |conn| {
-                let query =
-                    "SELECT m.id, m.channel_id, m.account_id, m.role, m.content, m.reply_to_id, m.created_at 
-                FROM messages m 
-                WHERE (m.account_id = ?1 OR (m.reply_to_id = ?1 AND m.account_id = ?2)) 
-                    AND m.created_at > ?3
-                ORDER BY m.created_at ASC
-                LIMIT ?4";
-
-            let mut stmt = conn.prepare(query)?;
-
-            let messages = stmt
-                    .query_map(rusqlite::params![user_id, other_user_id, since, limit], |row| {
-                        Message::try_from(row)
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?;
-
-                Ok(messages)
-            })
-            .await
-            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
-    }
 
     pub async fn channel_messages(
         &self,

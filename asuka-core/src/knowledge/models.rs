@@ -37,6 +37,7 @@ pub struct Message {
     pub id: String,
     pub source: Source,
     pub source_id: String,
+    pub reply_to_source_id: String,
     pub channel_type: ChannelType,
     pub channel_id: String,
     pub account_id: String,
@@ -96,6 +97,7 @@ impl SqliteVectorStoreTable for Message {
             Column::new("id", "TEXT PRIMARY KEY"),
             Column::new("source", "TEXT"),
             Column::new("source_id", "TEXT").indexed(),
+            Column::new("reply_to_source_id", "TEXT").indexed(),
             Column::new("channel_type", "TEXT"),
             Column::new("channel_id", "TEXT").indexed(),
             Column::new("account_id", "TEXT").indexed(),
@@ -114,6 +116,10 @@ impl SqliteVectorStoreTable for Message {
             ("id", Box::new(self.id.clone())),
             ("source", Box::new(self.source.as_str().to_string())),
             ("source_id", Box::new(self.source_id.clone())),
+            (
+                "reply_to_source_id",
+                Box::new(self.reply_to_source_id.clone()),
+            ),
             (
                 "channel_type",
                 Box::new(self.channel_type.as_str().to_string()),
@@ -182,20 +188,21 @@ impl TryFrom<&Row<'_>> for Message {
                 )
             })?,
             source_id: row.get(2)?,
-            channel_type: ChannelType::from_str(&row.get::<_, String>(3)?).map_err(|_| {
+            reply_to_source_id: row.get(3)?,
+            channel_type: ChannelType::from_str(&row.get::<_, String>(4)?).map_err(|_| {
                 rusqlite::Error::FromSqlConversionFailure(
-                    3,
+                    4,
                     rusqlite::types::Type::Text,
                     Box::new(super::error::ConversionError(
                         "Invalid channel type".to_string(),
                     )),
                 )
             })?,
-            channel_id: row.get(4)?,
-            account_id: row.get(5)?,
-            role: row.get(6)?,
-            content: row.get(7)?,
-            created_at: row.get(8)?,
+            channel_id: row.get(5)?,
+            account_id: row.get(6)?,
+            role: row.get(7)?,
+            content: row.get(8)?,
+            created_at: row.get(9)?,
         })
     }
 }
