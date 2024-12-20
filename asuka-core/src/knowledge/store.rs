@@ -49,20 +49,6 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
                 );
                 CREATE INDEX IF NOT EXISTS idx_channel_id_type ON channels(channel_id, channel_type);
 
-                -- Messages table
-                CREATE TABLE IF NOT EXISTS messages (
-                    id INTEGER PRIMARY KEY,
-                    channel_id INTEGER NOT NULL,
-                    account_id INTEGER NOT NULL,
-                    content TEXT NOT NULL,
-                    role TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (channel_id) REFERENCES channels(id),
-                    FOREIGN KEY (account_id) REFERENCES accounts(id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id);
-                CREATE INDEX IF NOT EXISTS idx_messages_account ON messages(account_id);
-
                 COMMIT;"
             )
             .map_err(tokio_rusqlite::Error::from)
