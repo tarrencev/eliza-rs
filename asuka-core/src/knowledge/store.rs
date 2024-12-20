@@ -231,22 +231,20 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
                 let tx = conn.transaction()?;
 
                 tx.execute(
-                    "INSERT INTO messages (id, channel_id, account_id, content, role, created_at, reply_to_source_id) 
-                 VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP, ?6)
+                    "INSERT INTO messages (id, channel_id, account_id, content, role, created_at) 
+                 VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
                  ON CONFLICT (id) DO UPDATE SET 
                      channel_id = ?2, 
                      account_id = ?3, 
                      content = ?4, 
                      role = ?5, 
-                     created_at = CURRENT_TIMESTAMP,
-                     reply_to_source_id = ?6",
+                     created_at = CURRENT_TIMESTAMP",
                     [
                         &msg.id,
                         &msg.channel_id,
                         &msg.account_id,
                         &msg.content,
                         &msg.role,
-                        &msg.reply_to_source_id,
                     ],
                 )?;
 
@@ -298,7 +296,6 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
             .await
             .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
     }
-
 
     pub async fn channel_messages(
         &self,
