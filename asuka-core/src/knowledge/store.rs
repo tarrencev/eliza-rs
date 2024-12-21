@@ -87,12 +87,12 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
             .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
     }
 
-    pub fn document_index(self) -> SqliteVectorIndex<E, Document> {
-        SqliteVectorIndex::new(self.embedding_model, self.document_store)
+    pub fn document_index(&self) -> SqliteVectorIndex<E, Document> {
+        SqliteVectorIndex::new(self.embedding_model.clone(), self.document_store.clone())
     }
 
-    pub fn message_index(self) -> SqliteVectorIndex<E, Message> {
-        SqliteVectorIndex::new(self.embedding_model, self.message_store)
+    pub fn message_index(&self) -> SqliteVectorIndex<E, Message> {
+        SqliteVectorIndex::new(self.embedding_model.clone(), self.message_store.clone())
     }
 
     pub async fn get_user_by_source(&self, source: String) -> Result<Option<Account>, SqliteError> {
