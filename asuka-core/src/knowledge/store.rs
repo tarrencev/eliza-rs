@@ -256,7 +256,7 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
             .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
     }
 
-    pub async fn get_recent_messages(
+    pub async fn get_recent_messages_in_channel(
         &self,
         channel_id: i64,
         limit: usize,
@@ -273,6 +273,28 @@ impl<E: EmbeddingModel> KnowledgeBase<E> {
 
                 let messages = stmt
                     .query_map(rusqlite::params![channel_id, limit], |row| {
+                        Message::try_from(row)
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                Ok(messages)
+            })
+            .await
+            .map_err(|e| SqliteError::DatabaseError(Box::new(e)))
+    }
+
+    pub async fn get_recent_messages(&self, limit: usize) -> Result<Vec<Message>, SqliteError> {
+        self.conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, source, source_id, channel_type, channel_id, account_id, role, content, created_at 
+                     FROM messages 
+                     ORDER BY created_at DESC 
+                     LIMIT ?1",
+                )?;
+
+                let messages = stmt
+                    .query_map(rusqlite::params![limit], |row| {
                         Message::try_from(row)
                     })?
                     .collect::<Result<Vec<_>, _>>()?;
